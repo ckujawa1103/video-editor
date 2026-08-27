@@ -7,7 +7,7 @@
 import { chromium } from 'playwright';
 import { spawn } from 'node:child_process';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { existsSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 
 /**
  * Use the sandbox's pre-installed Chromium when it is there; otherwise let
@@ -28,6 +28,10 @@ function check(name, ok, detail = '') {
   results.push({ name, ok, detail });
   console.log(`${ok ? '  ok  ' : ' FAIL '} ${name}${detail ? ` — ${detail}` : ''}`);
 }
+
+// Artifacts land here; it is git-ignored, so a fresh checkout has to create it.
+const ARTIFACTS = 'test-results';
+mkdirSync(ARTIFACTS, { recursive: true });
 
 const server = spawn('npx', ['vite', 'preview', '--port', String(PORT), '--strictPort'], {
   stdio: ['ignore', 'pipe', 'pipe'],
@@ -239,7 +243,7 @@ try {
       await runner.remove('still.mp4', 'still.png');
       return Array.from(d);
     });
-    writeFileSync('test-results/blur-fill-frame.png', Buffer.from(png));
+    writeFileSync(`${ARTIFACTS}/blur-fill-frame.png`, Buffer.from(png));
     check('frame: wrote test-results/blur-fill-frame.png', png.length > 1000, `${(png.length / 1024).toFixed(0)} KB`);
   }
 
@@ -250,7 +254,7 @@ try {
     { timeout: 60000 });
   check('result can be edited again', true);
 
-  await page.screenshot({ path: 'test-results/app.png', fullPage: true }).catch(() => {});
+  await page.screenshot({ path: `${ARTIFACTS}/app.png`, fullPage: true }).catch(() => {});
 } catch (err) {
   check('test run completed without throwing', false, err?.message || String(err));
   console.error(err);
