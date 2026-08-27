@@ -57,10 +57,12 @@ jobs:
         env:
           # GitHub Pages serves the project site from /<repo>/.
           VITE_BASE: /${{ github.event.repository.name }}/
+      # Pages must already be switched on for the repository, with its source
+      # set to GitHub Actions. The action's `enablement: true` option cannot do
+      # that for us: creating a Pages site is not a permission the workflow
+      # token can be granted, so it fails with "Resource not accessible by
+      # integration" whether the repository is public or private.
       - uses: actions/configure-pages@v5
-        with:
-          # Turns Pages on by itself, so there is no Settings page to visit.
-          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist

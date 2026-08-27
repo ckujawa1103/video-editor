@@ -73,14 +73,17 @@ can be eyeballed.
 ## Deploying
 
 `.github/workflows/deploy.yml` builds and publishes to GitHub Pages on every
-push to the repository's default branch, and turns Pages on itself, so there is
-no Settings page to visit. It sets `VITE_BASE` to `/<repo-name>/` so assets
-resolve under the Pages subdirectory.
+push to the repository's default branch, and sets `VITE_BASE` to `/<repo-name>/`
+so assets resolve under the Pages subdirectory.
 
-GitHub Pages only serves **private** repositories on paid plans. For a private
-repo on the free plan, either make the repository public or point a host that
-does serve private repos for free — Cloudflare Pages and Netlify both do — at
-this repo, with build command `npm run build` and output directory `dist`.
+One-time setup, in a browser: **Settings → Pages → Build and deployment →
+Source → GitHub Actions**. The workflow cannot do this for you — creating a
+Pages site is not a permission the Actions token can be granted.
+
+GitHub Pages also only serves **private** repositories on paid plans. For a
+private repo on the free plan, either make the repository public or use a host
+that serves private repos for free — Cloudflare Pages and Netlify both do — with
+build command `npm run build` and output directory `dist`.
 
 Any static host works: the build output is plain files and needs no special
 headers.
