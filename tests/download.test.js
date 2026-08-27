@@ -86,30 +86,58 @@ test('a healthy file is read through the fast path', async () => {
   assert.deepEqual(seen.at(-1)[0], bytes.length);
 });
 
+const refuse = (name = 'NotReadableError') => () =>
+  Promise.reject(Object.assign(new Error('The requested file could not be read'), { name }));
+
 test('a file whose arrayBuffer() fails falls back to streaming', async () => {
   const blob = new Blob([bytes]);
-  const flaky = {
-    name: 'clip.mp4',
-    size: bytes.length,
-    arrayBuffer: () => Promise.reject(new Error('permission denied')),
-    stream: () => blob.stream(),
-  };
-  const out = await readFileBytes(flaky);
+  const flaky = { name: 'clip.mp4', size: bytes.length, arrayBuffer: refuse(), stream: () => blob.stream() };
+  const out = await readFileBytes(flaky, { retryDelayMs: 0 });
   assert.deepEqual([...out], [...bytes], 'streaming recovers what the one-shot read could not');
 });
 
-test('when every read fails the user is told what to do, not given a code', async () => {
+test('a provider that only serves slices is still read in full', async () => {
+  // Android content providers really do refuse whole-file reads while
+  // answering slice requests, which is the case this fallback exists for.
+  const blob = new Blob([bytes]);
+  const awkward = {
+    name: 'from-photos.mp4',
+    size: bytes.length,
+    arrayBuffer: refuse(),
+    stream: () => { throw Object.assign(new Error('nope'), { name: 'NotReadableError' }); },
+    slice: (a, b) => blob.slice(a, b),
+  };
+  const out = await readFileBytes(awkward, { retryDelayMs: 0 });
+  assert.deepEqual([...out], [...bytes]);
+});
+
+test('a read that fails once and then succeeds is retried', async () => {
+  const blob = new Blob([bytes]);
+  let calls = 0;
+  const transient = {
+    name: 'flaky.mp4',
+    size: bytes.length,
+    arrayBuffer: () => (++calls === 1
+      ? Promise.reject(Object.assign(new Error('busy'), { name: 'NotReadableError' }))
+      : blob.arrayBuffer()),
+  };
+  const out = await readFileBytes(transient, { retryDelayMs: 0 });
+  assert.deepEqual([...out], [...bytes]);
+  assert.equal(calls, 2, 'took a second attempt');
+});
+
+test('when every read fails the message carries the real reason', async () => {
   const dead = {
     name: 'from-cloud.mp4',
     size: 1234,
-    arrayBuffer: () => Promise.reject(new Error('NotReadableError')),
-    stream: () => { throw new Error('NotReadableError'); },
+    arrayBuffer: refuse('NotFoundError'),
+    stream: () => { throw Object.assign(new Error('gone'), { name: 'NotFoundError' }); },
   };
-  await assert.rejects(readFileBytes(dead), (err) => {
+  await assert.rejects(readFileBytes(dead, { retryDelayMs: 0 }), (err) => {
     assert.match(err.message, /from-cloud\.mp4/, 'names the file');
-    assert.match(err.message, /Google Photos|cloud/i, 'explains the likely cause');
-    assert.match(err.message, /download it to the device/i, 'says what to do next');
-    assert.ok(Array.isArray(err.attempts) && err.attempts.length >= 2, 'keeps the underlying causes for the log');
+    assert.match(err.message, /NotFoundError/, 'quotes the real failure, not a guess');
+    assert.match(err.message, /Files app|download it to the device/i, 'says what to try');
+    assert.ok(err.attempts.length >= 3, 'records every route it tried');
     return true;
   });
 });

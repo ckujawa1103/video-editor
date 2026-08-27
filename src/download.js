@@ -52,76 +52,113 @@ export function bytesToBlobUrl(bytes, type) {
   return URL.createObjectURL(new Blob([bytes], { type }));
 }
 
+/** Describe a failure precisely enough to act on: DOMExceptions carry a name. */
+function describe(err) {
+  const name = err?.name && err.name !== 'Error' ? err.name : '';
+  const message = err?.message || String(err);
+  return name && !message.includes(name) ? `${name}: ${message}` : message;
+}
+
+const SLICE = 4 * 1024 * 1024;
+
 /**
- * Read a picked File into memory.
+ * Read a picked File into memory, trying every route the platform offers.
  *
- * `FileReader` — what @ffmpeg/util uses — is the legacy API and is the part
- * that fails, with a bare "File could not be read! Code=-1", when Android hands
- * over a handle whose backing content is not actually readable (a video picked
- * straight out of a cloud gallery is the usual case). Try the modern APIs
- * first, fall back through the older ones, and if everything fails say what the
- * user can do about it rather than quoting an error code.
+ * Android hands the browser a File backed by a content provider, and those
+ * reads fail in ways a desktop never sees: a whole-file read may be refused
+ * while slice-by-slice reads succeed, and some failures are transient. So work
+ * through the options rather than giving up on the first refusal, and keep what
+ * each one said — the DOMException name (NotReadableError, NotFoundError,
+ * SecurityError) is the difference between advice and a guess.
  */
 export async function readFileBytes(file, options = {}) {
-  const { onProgress = () => {} } = options;
+  const { onProgress = () => {}, retryDelayMs = 250 } = options;
   const size = file?.size || 0;
   const attempts = [];
 
-  // Fastest and least memory-hungry: one allocation, no intermediate copies.
-  if (typeof file?.arrayBuffer === 'function') {
+  const joined = (chunks, length) => {
+    const out = new Uint8Array(length);
+    let offset = 0;
+    for (const chunk of chunks) {
+      out.set(chunk, offset);
+      offset += chunk.length;
+    }
+    return out;
+  };
+
+  // 1. One shot: fastest, and the only route that needs a single allocation.
+  const whole = async () => {
+    const buf = await file.arrayBuffer();
+    onProgress(buf.byteLength, size);
+    return new Uint8Array(buf);
+  };
+
+  // 2. Streamed: gives progress, and survives some refusals the one-shot hits.
+  const streamed = async () => {
+    const reader = file.stream().getReader();
+    const chunks = [];
+    let received = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      received += value.length;
+      onProgress(received, size);
+    }
+    return joined(chunks, received);
+  };
+
+  // 3. Sliced: each slice re-opens the underlying content, which is what makes
+  //    this work on providers that refuse to serve the whole file at once.
+  const sliced = async () => {
+    const chunks = [];
+    let received = 0;
+    for (let start = 0; start < size; start += SLICE) {
+      const buf = await file.slice(start, Math.min(start + SLICE, size)).arrayBuffer();
+      chunks.push(new Uint8Array(buf));
+      received += buf.byteLength;
+      onProgress(received, size);
+    }
+    if (received === 0 && size > 0) throw new Error('read nothing');
+    return joined(chunks, received);
+  };
+
+  // 4. The legacy API, kept only for anything old enough to need it.
+  const legacy = () =>
+    new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(new Uint8Array(fr.result));
+      fr.onerror = () => reject(fr.error || new Error('FileReader failed'));
+      fr.readAsArrayBuffer(file);
+    });
+
+  const routes = [
+    ['whole file', whole, typeof file?.arrayBuffer === 'function'],
+    ['streaming', streamed, typeof file?.stream === 'function'],
+    ['in slices', sliced, typeof file?.slice === 'function' && typeof file?.arrayBuffer === 'function'],
+    // Some provider-backed reads fail once and then succeed, so give the most
+    // reliable route a second go before falling back to the oldest API.
+    ['whole file again', whole, typeof file?.arrayBuffer === 'function'],
+    ['FileReader', legacy, typeof FileReader === 'function'],
+  ];
+
+  for (const [label, run, usable] of routes) {
+    if (!usable) continue;
+    if (label.endsWith('again') && retryDelayMs > 0) {
+      await new Promise((r) => setTimeout(r, retryDelayMs));
+    }
     try {
-      const buf = await file.arrayBuffer();
-      onProgress(buf.byteLength, size);
-      return new Uint8Array(buf);
+      return await run();
     } catch (err) {
-      attempts.push(`arrayBuffer: ${err?.message || err}`);
+      attempts.push(`${label} — ${describe(err)}`);
     }
   }
 
-  // Streaming gives progress on a large file and survives some cases the
-  // one-shot read does not.
-  if (typeof file?.stream === 'function') {
-    try {
-      const reader = file.stream().getReader();
-      const chunks = [];
-      let received = 0;
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        chunks.push(value);
-        received += value.length;
-        onProgress(received, size);
-      }
-      const out = new Uint8Array(received);
-      let offset = 0;
-      for (const chunk of chunks) {
-        out.set(chunk, offset);
-        offset += chunk.length;
-      }
-      return out;
-    } catch (err) {
-      attempts.push(`stream: ${err?.message || err}`);
-    }
-  }
-
-  // Last resort, for anything old enough to need it.
-  if (typeof FileReader === 'function') {
-    try {
-      return await new Promise((resolve, reject) => {
-        const fr = new FileReader();
-        fr.onload = () => resolve(new Uint8Array(fr.result));
-        fr.onerror = () => reject(fr.error || new Error('FileReader failed'));
-        fr.readAsArrayBuffer(file);
-      });
-    } catch (err) {
-      attempts.push(`FileReader: ${err?.message || err}`);
-    }
-  }
-
+  const reason = attempts[0] ? attempts[0].replace(/^[^—]*— /, '') : 'no reason given';
   const err = new Error(
-    `This device would not let the app read "${file?.name || 'that file'}". ` +
-      'If you picked it from Google Photos, Drive or another cloud app, download it to the device first ' +
-      'and pick it from Files or Gallery instead.',
+    `This device would not let the app read "${file?.name || 'that file'}" (${reason}). ` +
+      'Try copying it to a different folder with the Files app and picking the copy, ' +
+      'or if it came from Google Photos or Drive, download it to the device first.',
   );
   err.attempts = attempts;
   throw err;
