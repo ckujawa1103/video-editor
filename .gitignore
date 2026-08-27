@@ -1,0 +1,7 @@
+node_modules/
+dist/
+public/ffmpeg/
+.DS_Store
+*.local
+test-results/
+.scratch/

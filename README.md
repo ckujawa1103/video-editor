@@ -1,0 +1,111 @@
+# Pocket Cut
+
+A small video editor that runs entirely in the browser on your phone. Pick a
+video, cut it, crop it, rotate it, swap the audio, and save the result. Nothing
+is ever uploaded — the whole video engine (ffmpeg, compiled to WebAssembly) runs
+on the device, so it also works with no signal.
+
+## What it does
+
+| Tool | What happens |
+| --- | --- |
+| **Clip** | Exports the selected section as its own file. Lossless stream copy by default (instant); an "exact cut" option re-encodes so the cut lands on the precise frame. |
+| **Crop & rotate** | Drag the crop box, rotate in 90° steps, flip, and pick an output shape (9:16, 1:1, 4:5, 16:9, 4:3). |
+| **Trim it away** | The output is exactly the crop — no padding. |
+| **Blurred fill** | The crop sits on a canvas of the chosen shape and a blurred, zoomed copy of the video fills the empty space, the way vertical TikToks do. Blur, background zoom and darkening are adjustable. |
+| **Save the audio** | Exports the sound as MP3 (or M4A / WAV), optionally just the selected section. |
+| **Remove the audio** | Drops the audio track and copies the video untouched — instant and lossless. |
+| **Add an audio track** | Drops in a new track: replace the original or mix with it, set where in the track to start, adjust levels, loop a short track to cover the video, fade out at the end. The track is always trimmed to the video's length. |
+
+A live preview canvas shows exactly what the export will look like, blurred fill
+included. **Edit this result** feeds an export straight back in as the new
+source, so operations can be chained (clip → crop → add music) without leaving
+the page.
+
+## Why a web app and not an Android APK
+
+- `ffmpeg-kit`, the standard ffmpeg binding for Android, was retired in 2025 and
+  its prebuilt binaries were pulled, so a native build has no maintained
+  foundation.
+- An APK means sideloading an unsigned build and re-installing by hand on every
+  change.
+- A web app installs to the home screen from the browser, updates itself, and
+  runs the same code everywhere.
+
+The trade-off is speed: WebAssembly re-encoding is slower than native. It is
+mitigated where it matters — clipping, removing audio and adding audio are all
+**stream copies** that do not re-encode at all, so they finish more or less
+instantly regardless of file size. Only cropping, rotating and blurred fill have
+to re-encode.
+
+## Install it on your phone
+
+1. Open the deployed URL in Chrome.
+2. Menu → **Add to Home screen**.
+3. Open it once from the home screen so the engine (~32 MB) is cached. After
+   that it works offline.
+
+## Running it locally
+
+```bash
+npm install
+npm run dev            # http://localhost:5173
+npm run build          # -> dist/
+npm run preview        # serve the production build
+```
+
+`npm run build` copies the ffmpeg core out of `node_modules` into
+`public/ffmpeg/` first (that directory is generated and git-ignored).
+
+## Tests
+
+```bash
+npm test               # unit tests for every ffmpeg command the app builds
+npm run build && npm run test:e2e   # drives the real UI in Chromium
+```
+
+The end-to-end test generates a test clip in the browser, runs every tool
+against it, and verifies each export by feeding it back through ffmpeg and
+reading the actual stream info — dimensions, duration and which streams
+survived. It also writes `test-results/blur-fill-frame.png` so the blurred fill
+can be eyeballed.
+
+## Deploying
+
+`.github/workflows/deploy.yml` builds and publishes to GitHub Pages on every
+push to `main`. One-time setup: repository **Settings → Pages → Source →
+GitHub Actions**. The workflow sets `VITE_BASE` to `/<repo-name>/` so assets
+resolve under the Pages subdirectory.
+
+Any static host works — the build output is plain files, and no special headers
+are required.
+
+## Notes and limits
+
+- **Memory.** The engine works in memory, in a 32-bit WebAssembly heap. Very
+  large sources (roughly 250 MB and up) can exhaust it during a re-encode. Clip
+  the section you want first, then crop it — the clip step is free.
+- **Stream-copy cuts snap to keyframes.** That is inherent to cutting without
+  re-encoding; the start moves back to the nearest keyframe, usually well under
+  a second. Tick **Exact cut** when the precise frame matters.
+- **Single-threaded on purpose.** `@ffmpeg/core-mt` would use several cores, but
+  every published build (0.12.6, 0.12.9, 0.12.10 were all tested) aborts with
+  `null function or function signature mismatch` as soon as a single job both
+  decodes H.264 and re-encodes it — which is most of what this app does. The
+  single-threaded core passes the full test suite, so that is what ships.
+- **Preview vs. editing.** If the browser cannot play a format it will say
+  "preview unavailable" — editing still works, because ffmpeg reads the file
+  independently of the video element.
+
+## Layout
+
+```
+index.html            markup for the whole app
+src/ops.js            pure builders: settings -> ffmpeg argument arrays
+src/ffmpeg-runner.js  loads the core, probes files, runs jobs, recovers from crashes
+src/framer.js         crop box, rotation, and the live result preview canvas
+src/main.js           wiring: file loading, tabs, jobs, results
+public/sw.js          offline cache for the app shell and the engine
+tests/ops.test.js     unit tests for every command
+tests/e2e.mjs         full browser run-through
+```

@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0e1014" />
+    <meta name="description" content="A small video editor that runs entirely on your phone — crop, rotate, clip, blur-fill and swap audio without uploading anything." />
+    <title>Pocket Cut</title>
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="icon" href="icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="icon-192.png" />
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <h1>Pocket&nbsp;Cut</h1>
+      <button id="aboutBtn" class="ghost small" type="button" aria-label="About this app">?</button>
+    </header>
+
+    <main>
+      <!-- ---------------- source ---------------- -->
+      <section class="card" id="sourceCard">
+        <label class="dropzone" id="dropzone" for="fileInput">
+          <input id="fileInput" type="file" accept="video/*,.mp4,.mov,.mkv,.webm,.m4v,.avi" hidden />
+          <strong>Choose a video</strong>
+          <span>or drop one here — nothing leaves your device</span>
+        </label>
+
+        <div id="sourceBody" hidden>
+          <div class="stage" id="stage" data-max-height="420">
+            <div class="rotor" id="rotor"><video id="preview" playsinline preload="metadata"></video></div>
+            <div class="croplayer" id="croplayer" hidden>
+              <div class="cropbox" id="cropbox"></div>
+            </div>
+          </div>
+
+          <div class="transport">
+            <button id="playBtn" class="ghost" type="button">▶︎ Play</button>
+            <input id="seek" class="seek" type="range" min="0" max="1000" value="0" step="1" aria-label="Seek" />
+            <span class="mono" id="timeLabel">0:00 / 0:00</span>
+          </div>
+
+          <div class="selection">
+            <div class="rangebar"><div class="rangefill" id="rangeFill"></div></div>
+            <div class="rangerow">
+              <div class="field">
+                <label for="startTime">Start</label>
+                <input id="startTime" class="mono" type="text" inputmode="decimal" value="0:00.0" />
+                <button class="ghost small" data-set="start" type="button">Set&nbsp;⌖</button>
+              </div>
+              <div class="field">
+                <label for="endTime">End</label>
+                <input id="endTime" class="mono" type="text" inputmode="decimal" value="0:00.0" />
+                <button class="ghost small" data-set="end" type="button">Set&nbsp;⌖</button>
+              </div>
+            </div>
+            <div class="rangerow tight">
+              <button class="ghost small" id="playSelection" type="button">Preview selection</button>
+              <button class="ghost small" id="resetSelection" type="button">Whole video</button>
+              <span class="muted mono" id="selLabel"></span>
+            </div>
+          </div>
+
+          <p class="meta mono" id="sourceMeta"></p>
+          <button class="ghost small" id="changeFile" type="button">Use a different video</button>
+        </div>
+      </section>
+
+      <!-- ---------------- tools ---------------- -->
+      <nav class="tabs" id="tabs" hidden>
+        <button class="tab active" data-tab="clip" type="button">Clip</button>
+        <button class="tab" data-tab="frame" type="button">Crop &amp; rotate</button>
+        <button class="tab" data-tab="audio" type="button">Audio</button>
+      </nav>
+
+      <section class="card panel" id="panel-clip" hidden>
+        <h2>Clip a section out</h2>
+        <p class="hint">Exports the selection above as its own file.</p>
+        <label class="row">
+          <input type="checkbox" id="clipReencode" />
+          <span>Exact cut (re-encodes — slower, but starts on the precise frame)</span>
+        </label>
+        <p class="hint" id="clipModeHint"></p>
+        <div class="row" id="clipQualityRow" hidden>
+          <label for="clipQuality">Quality</label>
+          <select id="clipQuality">
+            <option value="fast">Fast</option>
+            <option value="balanced" selected>Balanced</option>
+            <option value="best">Best</option>
+          </select>
+        </div>
+        <button class="primary" id="runClip" type="button">Export clip</button>
+      </section>
+
+      <section class="card panel" id="panel-frame" hidden>
+        <h2>Crop, rotate &amp; fill</h2>
+
+        <div class="row wrap">
+          <button class="ghost" id="rotLeft" type="button">⟲ 90°</button>
+          <button class="ghost" id="rotRight" type="button">⟳ 90°</button>
+          <button class="ghost" id="flipBtn" type="button">⇄ Flip</button>
+          <button class="ghost" id="resetCrop" type="button">Reset crop</button>
+        </div>
+
+        <div class="row">
+          <label for="aspect">Output shape</label>
+          <select id="aspect"></select>
+        </div>
+
+        <fieldset class="fillmode">
+          <legend>Empty space around the crop</legend>
+          <label class="radio">
+            <input type="radio" name="fill" value="trim" checked />
+            <span><strong>Trim it away</strong><br /><small>Output is exactly the crop.</small></span>
+          </label>
+          <label class="radio">
+            <input type="radio" name="fill" value="blur" />
+            <span><strong>Blurred fill</strong><br /><small>A blurred copy of the video fills the gaps, the way vertical TikToks do.</small></span>
+          </label>
+        </fieldset>
+
+        <div id="blurOpts" hidden>
+          <div class="row"><label for="blurAmount">Blur</label><input type="range" id="blurAmount" min="2" max="40" value="14" /></div>
+          <div class="row"><label for="bgZoom">Background zoom</label><input type="range" id="bgZoom" min="100" max="220" value="115" /></div>
+          <div class="row"><label for="bgDim">Darken</label><input type="range" id="bgDim" min="0" max="30" value="6" /></div>
+        </div>
+
+        <div class="row">
+          <label for="frameSize">Output size</label>
+          <select id="frameSize"></select>
+        </div>
+        <div class="row">
+          <label for="frameQuality">Quality</label>
+          <select id="frameQuality">
+            <option value="fast">Fast</option>
+            <option value="balanced" selected>Balanced</option>
+            <option value="best">Best</option>
+          </select>
+        </div>
+        <label class="row">
+          <input type="checkbox" id="frameUseSelection" />
+          <span>Only export the selected section</span>
+        </label>
+
+        <div class="previewpane">
+          <span class="muted">Result preview</span>
+          <canvas id="framePreview" width="200" height="300"></canvas>
+          <span class="mono muted" id="frameDims"></span>
+        </div>
+
+        <button class="primary" id="runFrame" type="button">Export video</button>
+      </section>
+
+      <section class="card panel" id="panel-audio" hidden>
+        <h2>Audio</h2>
+
+        <details open>
+          <summary>Save the audio as a file</summary>
+          <div class="row">
+            <label for="audioFormat">Format</label>
+            <select id="audioFormat">
+              <option value="mp3" selected>MP3</option>
+              <option value="m4a">M4A (AAC)</option>
+              <option value="wav">WAV (uncompressed)</option>
+            </select>
+          </div>
+          <div class="row" id="audioBitrateRow">
+            <label for="audioBitrate">Bitrate</label>
+            <select id="audioBitrate">
+              <option value="128k">128 kbps</option>
+              <option value="192k" selected>192 kbps</option>
+              <option value="320k">320 kbps</option>
+            </select>
+          </div>
+          <label class="row">
+            <input type="checkbox" id="audioUseSelection" />
+            <span>Only the selected section</span>
+          </label>
+          <button class="primary" id="runExtract" type="button">Export audio</button>
+        </details>
+
+        <details>
+          <summary>Remove the audio</summary>
+          <p class="hint">Keeps the video exactly as-is — no re-encoding, so it is quick and lossless.</p>
+          <button class="primary" id="runStrip" type="button">Export silent video</button>
+        </details>
+
+        <details>
+          <summary>Add an audio track</summary>
+          <label class="dropzone small" id="audioDrop" for="audioInput">
+            <input id="audioInput" type="file" accept="audio/*,video/*" hidden />
+            <strong id="audioFileName">Choose an audio file</strong>
+            <span>MP3, M4A, WAV, or the sound from another video</span>
+          </label>
+          <div id="addAudioOpts" hidden>
+            <fieldset class="fillmode">
+              <legend>What to do with the existing sound</legend>
+              <label class="radio"><input type="radio" name="amode" value="replace" checked /><span>Replace it</span></label>
+              <label class="radio"><input type="radio" name="amode" value="mix" /><span>Mix both together</span></label>
+            </fieldset>
+            <div class="row">
+              <label for="audioStart">Start the track at</label>
+              <input id="audioStart" class="mono" type="text" inputmode="decimal" value="0:00.0" />
+            </div>
+            <p class="hint" id="audioTrackHint"></p>
+            <div class="row"><label for="audioVolume">Track volume</label><input type="range" id="audioVolume" min="0" max="200" value="100" /></div>
+            <div class="row" id="origVolRow" hidden><label for="origVolume">Original volume</label><input type="range" id="origVolume" min="0" max="200" value="100" /></div>
+            <label class="row"><input type="checkbox" id="audioLoop" /><span>Loop the track if it is shorter than the video</span></label>
+            <div class="row"><label for="fadeOut">Fade out (s)</label><input id="fadeOut" type="number" min="0" max="10" step="0.5" value="0" /></div>
+            <button class="primary" id="runAddAudio" type="button">Export with new audio</button>
+          </div>
+        </details>
+      </section>
+
+      <!-- ---------------- job + result ---------------- -->
+      <section class="card job" id="jobCard" hidden>
+        <div class="row between">
+          <strong id="jobTitle">Working…</strong>
+          <button class="ghost small" id="cancelJob" type="button">Cancel</button>
+        </div>
+        <div class="bar"><div class="barfill" id="jobBar"></div></div>
+        <p class="mono muted" id="jobStatus"></p>
+        <details id="logBox">
+          <summary>Engine log</summary>
+          <pre class="log mono" id="jobLog"></pre>
+        </details>
+      </section>
+
+      <section class="card result" id="resultCard" hidden>
+        <h2>Done</h2>
+        <video id="resultVideo" controls playsinline hidden></video>
+        <audio id="resultAudio" controls hidden></audio>
+        <p class="mono muted" id="resultMeta"></p>
+        <div class="row wrap">
+          <a class="primary" id="downloadBtn" download>Save file</a>
+          <button class="ghost" id="shareBtn" type="button" hidden>Share…</button>
+          <button class="ghost" id="chainBtn" type="button">Edit this result</button>
+        </div>
+      </section>
+
+      <p class="footnote" id="engineNote"></p>
+    </main>
+
+    <dialog id="aboutDlg">
+      <h2>Pocket Cut</h2>
+      <p>A small video editor that runs entirely inside your browser. Your files are never uploaded — the whole video engine (ffmpeg, compiled to WebAssembly) runs on this device.</p>
+      <ul>
+        <li><strong>Clip</strong> — cut a section out as its own file.</li>
+        <li><strong>Crop &amp; rotate</strong> — drag the box, pick an output shape, and either trim the leftovers away or fill them with a blurred copy of the video.</li>
+        <li><strong>Audio</strong> — save the sound as an MP3, strip it out, or drop a new track in.</li>
+      </ul>
+      <p class="hint">Add it to your home screen and it works offline. Long 4K clips are slow — trim first, then crop.</p>
+      <form method="dialog"><button class="primary">Close</button></form>
+    </dialog>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
