@@ -234,6 +234,22 @@ try {
     check('frame: wrote test-results/blur-fill-frame.png', png.length > 1000, `${(png.length / 1024).toFixed(0)} KB`);
   }
 
+  /* ---- the safety net for a discarded tab ---- */
+  console.log('\n· the finished export is written down in case the tab is discarded');
+  const stashed = await page.evaluate(
+    () =>
+      new Promise((resolve) => {
+        const req = indexedDB.open('pocket-cut', 1);
+        req.onsuccess = () => {
+          const get = req.result.transaction('last-export', 'readonly').objectStore('last-export').get('result');
+          get.onsuccess = () => resolve({ has: !!get.result?.blob, name: get.result?.name || '' });
+          get.onerror = () => resolve({ has: false });
+        };
+        req.onerror = () => resolve({ has: false });
+      }),
+  );
+  check('the last export is recoverable after a reload', stashed.has, stashed.name);
+
   /* ---- chaining ---- */
   console.log('\n· feed the result back in as a new source');
   await page.click('#chainBtn');

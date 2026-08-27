@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  ASPECTS, buildAddAudio, buildClip, buildExtractAudio, buildFrame, buildStripAudio,
+  ASPECTS, QUALITY, buildAddAudio, buildClip, buildExtractAudio, buildFrame, buildStripAudio,
   canCopyAudio, even, parseCaps, parseProbe, parseTimecode, targetSize, timecode, audioEncoder,
 } from '../src/ops.js';
 
@@ -67,8 +67,8 @@ test('clip copies streams by default and re-encodes on request', () => {
 
   const exact = buildClip({ ...src, start: 3, duration: 7, reencode: true, quality: 'best' });
   assert.equal(argOf(exact.args, '-c:v'), 'libx264');
-  assert.equal(argOf(exact.args, '-crf'), '20');
-  assert.equal(argOf(exact.args, '-preset'), 'medium');
+  assert.equal(argOf(exact.args, '-crf'), String(QUALITY.best.crf));
+  assert.equal(argOf(exact.args, '-preset'), QUALITY.best.preset);
   assert.ok(!exact.args.includes('-avoid_negative_ts'));
 });
 
@@ -260,4 +260,21 @@ test('frame can trim in the same pass instead of a separate copy step', () => {
 
   const whole = buildFrame({ ...src, sourceWidth: 640, sourceHeight: 480 });
   assert.ok(!whole.args.includes('-ss') && !whole.args.includes('-t'));
+});
+
+test('quality presets stay inside the speed budget they were measured against', () => {
+  // Measured on an 8.3s 720x1280 clip: ultrafast 1.0x realtime, superfast 2.7x,
+  // veryfast 4.7x, medium 14.7x. Anything from veryfast onwards makes a phone
+  // render feel broken, so those presets must not creep back in as defaults.
+  const affordable = new Set(['ultrafast', 'superfast']);
+  for (const [key, q] of Object.entries(QUALITY)) {
+    assert.ok(affordable.has(q.preset), `${key} uses ${q.preset}, which is too slow on a phone`);
+    assert.ok(q.crf >= 18 && q.crf <= 30, `${key} crf ${q.crf} out of range`);
+    assert.ok(q.roughly > 0 && q.roughly <= 4, `${key} claims ${q.roughly}x, which is not what was measured`);
+    assert.equal(typeof q.note, 'string');
+  }
+  // Ordered: faster presets first, and better quality costs more time.
+  assert.ok(QUALITY.fast.roughly <= QUALITY.balanced.roughly);
+  assert.ok(QUALITY.balanced.roughly <= QUALITY.best.roughly);
+  assert.ok(QUALITY.fast.crf > QUALITY.best.crf, 'better quality means a lower crf');
 });

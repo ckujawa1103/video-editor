@@ -95,6 +95,45 @@ build command `npm run build` and output directory `dist`.
 Any static host works: the build output is plain files and needs no special
 headers.
 
+## Speed
+
+Rendering happens in WebAssembly on the device, so the x264 preset decides
+almost everything. Measured on an 8.3s 720x1280 clip:
+
+| preset | time | vs. clip length |
+| --- | --- | --- |
+| stream copy (clip, mute, add audio) | 0.2s | 0.03x |
+| decode only | 3.9s | 0.5x |
+| `ultrafast` | 9.9s | 1.2x |
+| `superfast` | 22.6s | 2.7x |
+| `veryfast` | 38.9s | 4.7x |
+| `medium` | 121.9s | 14.7x |
+
+CRF barely moves the clock but decides the file size, so the presets in
+`QUALITY` buy speed with the x264 preset and quality with CRF. Everything from
+`veryfast` onwards makes a phone render feel broken; a unit test keeps those
+presets out.
+
+Clipping, removing audio and adding audio are stream copies and do not
+re-encode at all, so they finish more or less instantly whatever the file size.
+Trimming before cropping is therefore always worth it.
+
+## Rendering in the background
+
+A web page cannot insist on running while it is in the background — Android is
+free to freeze or discard the tab, and no API changes that. What the app does
+instead:
+
+- holds a **screen wake lock** for the duration of a render, so the display does
+  not sleep, which is the usual reason a tab gets dropped; it is re-taken
+  whenever the page becomes visible again
+- **warns before a navigation** throws away a render in progress
+- **writes each finished export to IndexedDB immediately**, so a tab discarded
+  before the file was saved costs a reload rather than the whole render
+
+The most effective measure is simply that renders are fast enough not to need
+any of this.
+
 ## Notes and limits
 
 - **Memory.** The engine works in memory, in a 32-bit WebAssembly heap. Very

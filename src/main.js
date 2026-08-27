@@ -1,13 +1,25 @@
 import { Runner, FfmpegError } from './ffmpeg-runner.js';
 import { createFramer } from './framer.js';
+import { createKeepAlive } from './keepalive.js';
+import { clearResult, loadResult, saveResult } from './stash.js';
 import {
-  ASPECTS, SIZES, buildAddAudio, buildClip, buildExtractAudio, buildFrame,
+  ASPECTS, QUALITY, SIZES, buildAddAudio, buildClip, buildExtractAudio, buildFrame,
   buildStripAudio, baseOf, extOf, parseTimecode, timecode, clamp,
 } from './ops.js';
 
 const $ = (id) => document.getElementById(id);
 
 const runner = new Runner();
+
+const keepAlive = createKeepAlive({
+  onStateChange: (held) => {
+    const note = $('jobKeepAlive');
+    note.hidden = !app.busy;
+    note.textContent = held
+      ? 'Keeping the screen awake until this finishes. Leaving the app may still pause it — Android decides.'
+      : 'Keep this screen open while it renders; Android may pause the app in the background.';
+  },
+});
 
 const app = {
   file: null,          // the source File
@@ -344,6 +356,7 @@ function syncSelectionInputs() {
   const len = Math.max(0, app.sel.end - app.sel.start);
   $('selLabel').textContent = `${fmtTime(len)} selected`;
   updateClipHint();
+  updateEstimates();
 }
 
 function readSelectionInputs() {
@@ -511,6 +524,30 @@ for (const key of Object.keys(SIZES)) {
   $('frameSize').add(new Option(key === 'source' ? 'Same as source' : `${key}p`, key));
 }
 
+for (const id of ['clipQuality', 'frameQuality']) {
+  for (const [key, q] of Object.entries(QUALITY)) $(id).add(new Option(q.label, key));
+  $(id).value = 'balanced';
+  $(id).addEventListener('change', updateEstimates);
+}
+
+/** Renders take a predictable multiple of the clip's length; say so up front. */
+function estimateFor(quality, seconds) {
+  const q = QUALITY[quality] || QUALITY.balanced;
+  if (!seconds) return `Takes ${q.note}.`;
+  const secs = Math.max(1, Math.round(seconds * q.roughly));
+  const shown = secs >= 90 ? `${Math.round(secs / 60)} minutes` : `${secs} seconds`;
+  return `Takes ${q.note} — roughly ${shown} for this one, and longer on an older phone.`;
+}
+
+function updateEstimates() {
+  const whole = app.info?.duration || 0;
+  const selected = Math.max(0, app.sel.end - app.sel.start) || whole;
+  $('clipEstimate').textContent = $('clipReencode').checked ? estimateFor($('clipQuality').value, selected) : '';
+  const frameSeconds = $('frameUseSelection').checked ? selected : whole;
+  $('frameEstimate').textContent = estimateFor($('frameQuality').value, frameSeconds);
+}
+$('frameUseSelection').addEventListener('change', updateEstimates);
+
 function frameOptions() {
   const s = framer.getSettings();
   return {
@@ -569,6 +606,7 @@ window.addEventListener('resize', () => (framer.relayout(), framer.render()));
 function updateClipHint() {
   const exact = $('clipReencode').checked;
   $('clipQualityRow').hidden = !exact;
+  updateEstimates();
   $('clipModeHint').textContent = exact
     ? 'Re-encodes the section, so the cut lands on the exact frame you picked.'
     : 'Copies the streams untouched — very fast and lossless, but the start snaps back to the nearest keyframe (usually within a second or two).';
@@ -586,8 +624,14 @@ async function runJob(title, build, kind = 'video') {
   $('jobLog').textContent = '';
   $('jobBar').style.width = '0%';
   $('jobBar').classList.add('indeterminate');
+  $('jobKeepAlive').hidden = false;
   setButtonsDisabled(true);
+  await keepAlive.start();
   const started = performance.now();
+  const tick = setInterval(() => {
+    const secs = Math.round((performance.now() - started) / 1000);
+    if (app.busy) setStatus(`Working… ${secs}s elapsed`);
+  }, 1000);
 
   try {
     await ensureEngine();
@@ -600,13 +644,18 @@ async function runJob(title, build, kind = 'video') {
     const data = await runner.readFile(plan.output);
     await runner.remove(plan.output, ...(plan.cleanup || []));
     const blob = new Blob([data.buffer ?? data], { type: plan.mime || (kind === 'audio' ? 'audio/mpeg' : 'video/mp4') });
+    clearInterval(tick);
     showResult(blob, plan.output, kind);
+    // Write it down straight away: if Android discards the tab before the file
+    // is saved, a reload gets it back instead of re-running the whole render.
+    saveResult({ blob, name: plan.output, kind });
     const secs = ((performance.now() - started) / 1000).toFixed(1);
     setStatus(`Finished in ${secs}s.`);
     $('jobBar').classList.remove('indeterminate');
     $('jobBar').style.width = '100%';
   } catch (err) {
     console.error(err);
+    clearInterval(tick);
     $('jobBar').classList.remove('indeterminate');
     $('jobBar').style.width = '0%';
     const msg = err instanceof FfmpegError ? err.friendly : err?.message || String(err);
@@ -614,7 +663,10 @@ async function runJob(title, build, kind = 'video') {
     $('logBox').open = true;
     toast(msg, true);
   } finally {
+    clearInterval(tick);
     app.busy = false;
+    $('jobKeepAlive').hidden = true;
+    await keepAlive.stop();
     setButtonsDisabled(false);
   }
 }
@@ -721,11 +773,20 @@ $('runFrame').addEventListener('click', () =>
     return plan;
   }));
 
+// If a previous session produced a file that was never saved, offer it back.
+loadResult().then((row) => {
+  if (!row || app.result) return;
+  showResult(row.blob, row.name, row.kind || 'video');
+  $('restoredNote').hidden = false;
+});
+
 $('cancelJob').addEventListener('click', async () => {
   if (!app.busy) return;
   runner.terminate();
   app.fsName = null;
   app.busy = false;
+  await keepAlive.stop();
+  $('jobKeepAlive').hidden = true;
   setButtonsDisabled(false);
   $('jobBar').classList.remove('indeterminate');
   setStatus('Cancelled.');
@@ -742,6 +803,7 @@ function releaseResult() {
 }
 
 function showResult(blob, name, kind) {
+  $('restoredNote').hidden = true;
   const url = URL.createObjectURL(blob);
   app.result = { url, blob, name, kind };
   $('resultCard').hidden = false;
@@ -755,6 +817,8 @@ function showResult(blob, name, kind) {
   const dl = $('downloadBtn');
   dl.href = url;
   dl.download = name;
+  // Saved is saved: drop the safety copy so it is not offered again later.
+  dl.onclick = () => clearResult();
   $('chainBtn').hidden = kind !== 'video';
 
   const file = new File([blob], name, { type: blob.type });

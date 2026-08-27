@@ -88,12 +88,9 @@
         <p class="hint" id="clipModeHint"></p>
         <div class="row" id="clipQualityRow" hidden>
           <label for="clipQuality">Quality</label>
-          <select id="clipQuality">
-            <option value="fast">Fast</option>
-            <option value="balanced" selected>Balanced</option>
-            <option value="best">Best</option>
-          </select>
+          <select id="clipQuality"></select>
         </div>
+        <p class="hint" id="clipEstimate"></p>
         <button class="primary" id="runClip" type="button">Export clip</button>
       </section>
 
@@ -136,11 +133,7 @@
         </div>
         <div class="row">
           <label for="frameQuality">Quality</label>
-          <select id="frameQuality">
-            <option value="fast">Fast</option>
-            <option value="balanced" selected>Balanced</option>
-            <option value="best">Best</option>
-          </select>
+          <select id="frameQuality"></select>
         </div>
         <label class="row">
           <input type="checkbox" id="frameUseSelection" />
@@ -153,6 +146,7 @@
           <span class="mono muted" id="frameDims"></span>
         </div>
 
+        <p class="hint" id="frameEstimate"></p>
         <button class="primary" id="runFrame" type="button">Export video</button>
       </section>
 
@@ -225,6 +219,7 @@
         </div>
         <div class="bar"><div class="barfill" id="jobBar"></div></div>
         <p class="mono muted" id="jobStatus"></p>
+        <p class="hint" id="jobKeepAlive" hidden></p>
         <details id="logBox">
           <summary>Engine log</summary>
           <pre class="log mono" id="jobLog"></pre>
@@ -233,6 +228,7 @@
 
       <section class="card result" id="resultCard" hidden>
         <h2>Done</h2>
+        <p class="hint" id="restoredNote" hidden>This is an export from earlier that was still waiting to be saved.</p>
         <video id="resultVideo" controls playsinline hidden></video>
         <audio id="resultAudio" controls hidden></audio>
         <p class="mono muted" id="resultMeta"></p>

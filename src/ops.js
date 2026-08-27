@@ -35,10 +35,19 @@ export function parseTimecode(text) {
   return Number.isFinite(total) ? total : null;
 }
 
+/**
+ * Encoding presets, chosen by measurement rather than by their names.
+ *
+ * On an 8.3s 720x1280 clip the x264 preset dominates everything else:
+ * ultrafast 1.0x realtime, superfast 2.7x, veryfast 4.7x, medium 14.7x. CRF
+ * barely moves the clock but decides the file size, so quality is tuned with
+ * CRF and speed is bought with the preset. `roughly` is the multiple of the
+ * clip's length a render takes, for setting expectations in the UI.
+ */
 export const QUALITY = {
-  fast: { crf: 26, preset: 'ultrafast', label: 'Fast' },
-  balanced: { crf: 23, preset: 'veryfast', label: 'Balanced' },
-  best: { crf: 20, preset: 'medium', label: 'Best' },
+  fast: { crf: 28, preset: 'ultrafast', label: 'Fast', roughly: 1, note: 'about as long as the clip itself' },
+  balanced: { crf: 24, preset: 'ultrafast', label: 'Balanced', roughly: 1.2, note: 'a little longer than the clip' },
+  best: { crf: 21, preset: 'superfast', label: 'Best quality', roughly: 3, note: 'around three times the clip length' },
 };
 
 export const ASPECTS = {
