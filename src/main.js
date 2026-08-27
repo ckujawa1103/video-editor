@@ -345,6 +345,30 @@ previewEl.addEventListener('pause', () => {
 previewEl.addEventListener('seeked', () => framer.render());
 previewEl.addEventListener('loadeddata', () => framer.render());
 
+/**
+ * The browser sometimes takes longer than we are willing to wait — a large file
+ * with its index at the end, say. We stop blocking on it after a few seconds,
+ * but we keep listening, so a late arrival still fills in the preview instead
+ * of leaving a wrong "cannot play this file" verdict on screen.
+ */
+previewEl.addEventListener('loadedmetadata', () => {
+  if (!app.info || !previewEl.videoWidth) return;
+  const late = !app.info.width || previewFailed;
+  previewFailed = false;
+  if (!app.info.width) {
+    app.info.width = previewEl.videoWidth;
+    app.info.height = previewEl.videoHeight;
+    $('stage').classList.remove('pending');
+    framer.setSource(previewEl.videoWidth, previewEl.videoHeight);
+  }
+  if (!app.info.duration && Number.isFinite(previewEl.duration)) {
+    app.info.duration = previewEl.duration;
+    app.sel.end = app.sel.end || previewEl.duration;
+    syncSelectionInputs();
+  }
+  if (late) refreshMeta();
+});
+
 $('playBtn').addEventListener('click', () => {
   if (previewEl.paused) previewEl.play().catch(() => {});
   else previewEl.pause();
@@ -727,6 +751,22 @@ $('retryProbe').addEventListener('click', () => {
   runner.terminate();
   app.fsName = null;
   probeInBackground();
+});
+
+$('buildId').textContent = `Build ${typeof __BUILD_ID__ === 'string' ? __BUILD_ID__ : 'unknown'}`;
+
+$('forceUpdate').addEventListener('click', async () => {
+  $('forceUpdate').disabled = true;
+  try {
+    const regs = (await navigator.serviceWorker?.getRegistrations?.()) || [];
+    await Promise.all(regs.map((r) => r.unregister()));
+    const keys = await caches.keys();
+    await Promise.all(keys.map((k) => caches.delete(k)));
+  } catch (err) {
+    console.warn('could not clear the stored copy', err);
+  }
+  // Bypass any HTTP-cached copy of the page as well.
+  location.replace(`${location.pathname}?reinstalled=${Date.now()}`);
 });
 
 $('aboutBtn').addEventListener('click', () => $('aboutDlg').showModal());

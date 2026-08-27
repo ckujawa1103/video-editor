@@ -11,10 +11,19 @@ try {
   /* not vendored yet; the app falls back to reporting bytes received */
 }
 
+// A visible build stamp, so a stale cached copy can be identified at a glance.
+const buildId = [
+  new Date().toISOString().slice(0, 16).replace('T', ' '),
+  (process.env.GITHUB_SHA || '').slice(0, 7),
+].filter(Boolean).join(' · ');
+
 export default defineConfig({
   // Set VITE_BASE when deploying under a subdirectory, e.g. GitHub Pages.
   base: process.env.VITE_BASE || '/',
-  define: { __FFMPEG_WASM_BYTES__: JSON.stringify(wasmBytes) },
+  define: {
+    __FFMPEG_WASM_BYTES__: JSON.stringify(wasmBytes),
+    __BUILD_ID__: JSON.stringify(buildId),
+  },
   build: {
     target: 'es2022',
     chunkSizeWarningLimit: 2000,
