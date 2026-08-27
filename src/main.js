@@ -3,13 +3,22 @@ import { createFramer } from './framer.js';
 import { createKeepAlive } from './keepalive.js';
 import { clearResult, loadResult, saveResult } from './stash.js';
 import {
-  ASPECTS, QUALITY, SIZES, buildAddAudio, buildClip, buildExtractAudio, buildFrame,
-  buildStripAudio, baseOf, extOf, parseTimecode, timecode, clamp,
+  ASPECTS, QUALITY, SIZES, buildAddAudio, buildAttachAudio, buildClip, buildExtractAudio,
+  buildFrame, buildStripAudio, baseOf, extOf, frameGeometry, parseTimecode, timecode, clamp,
 } from './ops.js';
 
 const $ = (id) => document.getElementById(id);
 
 const runner = new Runner();
+
+/**
+ * Whether the hardware encoder is worth trying. Checked inline rather than
+ * imported, so the media library behind it stays in its own chunk and is only
+ * downloaded when a render actually uses it.
+ */
+function turboPossible() {
+  return typeof VideoEncoder !== 'undefined' && typeof VideoDecoder !== 'undefined' && typeof OffscreenCanvas !== 'undefined';
+}
 
 const keepAlive = createKeepAlive({
   onStateChange: (held) => {
@@ -32,6 +41,8 @@ const app = {
   audioInfo: null,
   result: null,        // { url, blob, name, kind }
   busy: false,
+  turboUsed: false,    // whether the last render used the hardware encoder
+  turboCodec: 'avc',   // overridden only by tests on browsers without H.264
 };
 
 /* ------------------------------------------------------------------ *
@@ -617,6 +628,7 @@ async function runJob(title, build, kind = 'video') {
   if (app.busy) return;
   if (!app.file) return toast('Choose a video first.', true);
   app.busy = true;
+  app.turboUsed = false;
   releaseResult();
   $('jobCard').hidden = false;
   $('resultCard').hidden = true;
@@ -638,19 +650,26 @@ async function runJob(title, build, kind = 'video') {
     const input = await stageSource();
     setSourceStatus('');
     const plan = await build(input);
-    setStatus('Processing…');
-    await runner.exec(plan.args);
-    setStatus('Collecting the result…');
-    const data = await runner.readFile(plan.output);
-    await runner.remove(plan.output, ...(plan.cleanup || []));
-    const blob = new Blob([data.buffer ?? data], { type: plan.mime || (kind === 'audio' ? 'audio/mpeg' : 'video/mp4') });
+    let blob;
+    if (plan.readyBlob) {
+      // Already a complete file — nothing left for ffmpeg to do.
+      blob = plan.readyBlob;
+      await runner.remove(...(plan.cleanup || []));
+    } else {
+      setStatus(app.turboUsed ? 'Adding the audio…' : 'Processing…');
+      await runner.exec(plan.args);
+      setStatus('Collecting the result…');
+      const data = await runner.readFile(plan.output);
+      await runner.remove(plan.output, ...(plan.cleanup || []));
+      blob = new Blob([data.buffer ?? data], { type: plan.mime || (kind === 'audio' ? 'audio/mpeg' : 'video/mp4') });
+    }
     clearInterval(tick);
     showResult(blob, plan.output, kind);
     // Write it down straight away: if Android discards the tab before the file
     // is saved, a reload gets it back instead of re-running the whole render.
     saveResult({ blob, name: plan.output, kind });
     const secs = ((performance.now() - started) / 1000).toFixed(1);
-    setStatus(`Finished in ${secs}s.`);
+    setStatus(`Finished in ${secs}s${app.turboUsed ? ' using the video chip' : ''}.`);
     $('jobBar').classList.remove('indeterminate');
     $('jobBar').style.width = '100%';
   } catch (err) {
@@ -770,15 +789,90 @@ $('runFrame').addEventListener('click', () =>
       audioCodec: i.audioCodec,
       caps: runner.caps,
     });
+
+    // The hardware path replaces only the video encode, which is the whole
+    // cost. If anything about it fails, the plan above still stands.
+    if ($('useTurbo').checked && turboPossible()) {
+      const done = await tryTurbo({ o, range, input, source: i });
+      if (done) return done;
+    }
     return plan;
   }));
 
-// If a previous session produced a file that was never saved, offer it back.
-loadResult().then((row) => {
-  if (!row || app.result) return;
-  showResult(row.blob, row.name, row.kind || 'video');
-  $('restoredNote').hidden = false;
-});
+/**
+ * Render the video on the phone's encoder, then let ffmpeg stream-copy the
+ * original audio onto it. Returns null if the device cannot do it, which leaves
+ * the caller on the WebAssembly path.
+ */
+async function tryTurbo({ o, range, input, source }) {
+  const g = frameGeometry({
+    rotate: o.rotate, flipH: o.flipH, crop: o.crop, fill: o.fill,
+    aspect: o.aspect, shortEdge: o.shortEdge,
+    sourceWidth: source.width, sourceHeight: source.height,
+  });
+
+  let turbo;
+  try {
+    const { renderTurbo } = await import('./turbo.js');
+    setStatus('Rendering on the video chip…');
+    turbo = await renderTurbo({
+      file: app.file,
+      settings: {
+        rotate: g.rotate,
+        flipH: g.flipH,
+        crop: g.crop || { x: 0, y: 0, w: g.rotW, h: g.rotH },
+        width: g.width,
+        height: g.height,
+        fill: g.fill,
+        blurAmount: o.blurAmount,
+        bgZoom: o.bgZoom,
+        bgDim: o.bgDim,
+        quality: o.quality,
+        displayW: source.width,
+        displayH: source.height,
+        start: range?.start || 0,
+        duration: range?.duration || 0,
+        codec: app.turboCodec || 'avc',
+      },
+      onProgress: (ratio) => {
+        $('jobBar').classList.remove('indeterminate');
+        $('jobBar').style.width = `${(ratio * 100).toFixed(0)}%`;
+      },
+      shouldStop: () => !app.busy,
+    });
+  } catch (err) {
+    console.info('hardware encoding unavailable, falling back', err);
+    app.turboUsed = false;
+    setStatus(`Video chip unavailable (${err?.message || err}) — using the slower engine.`);
+    return null;
+  }
+
+  app.turboUsed = true;
+  await runner.writeFile('turbo.mp4', new Uint8Array(await turbo.blob.arrayBuffer()));
+
+  // No audio to attach: the hardware output is already the finished file.
+  if (source.hasAudio === false) {
+    return {
+      args: null,
+      output: `${app.base}-${g.fill === 'blur' ? 'framed' : 'cropped'}.mp4`,
+      readyBlob: turbo.blob,
+      cleanup: ['turbo.mp4'],
+    };
+  }
+
+  const attach = buildAttachAudio({
+    video: 'turbo.mp4',
+    source: input,
+    base: app.base,
+    fill: g.fill,
+    start: range?.start || 0,
+    duration: range?.duration || 0,
+    audioCodec: source.audioCodec,
+    caps: runner.caps,
+  });
+  attach.cleanup = ['turbo.mp4'];
+  return attach;
+}
 
 $('cancelJob').addEventListener('click', async () => {
   if (!app.busy) return;
@@ -846,6 +940,11 @@ $('retryProbe').addEventListener('click', () => {
   probeInBackground();
 });
 
+$('turboNote').textContent = turboPossible()
+  ? 'Falls back to the built-in encoder automatically if the chip cannot do it.'
+  : 'Not available in this browser — the built-in encoder will be used.';
+if (!turboPossible()) $('useTurbo').checked = false;
+
 $('buildId').textContent = `Build ${typeof __BUILD_ID__ === 'string' ? __BUILD_ID__ : 'unknown'}`;
 
 $('forceUpdate').addEventListener('click', async () => {
@@ -887,4 +986,4 @@ if ('serviceWorker' in navigator) {
 
 // A small handle for debugging and for the end-to-end tests. Everything here is
 // local to the page; the app has no network side to expose.
-window.__pocketcut = { app, runner, framer, ensureEngine, showTab };
+window.__pocketcut = { app, runner, framer, ensureEngine, showTab, loadTurbo: () => import('./turbo.js') };

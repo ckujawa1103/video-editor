@@ -14,6 +14,24 @@ export function clamp(n, lo, hi) {
   return Math.min(hi, Math.max(lo, n));
 }
 
+/**
+ * Blur radius in canvas pixels for a background of the given short edge.
+ *
+ * Shared so the live preview and the exported file agree: the radius has to
+ * scale with the canvas, or a blur tuned on a 300px preview looks like nothing
+ * at 1080p.
+ */
+export function blurPixels(shortEdge, amount) {
+  return Math.max(2, ((amount ?? 14) / 100) * shortEdge * 0.25);
+}
+
+/** Bits per second for a hardware H.264 encode at the given size and quality. */
+export function videoBitrate(width, height, fps, quality) {
+  const perPixel = { fast: 0.05, balanced: 0.09, best: 0.15 }[quality] ?? 0.09;
+  const bits = width * height * (fps || 30) * perPixel;
+  return Math.round(clamp(bits, 800_000, 24_000_000));
+}
+
 /** Seconds -> the `HH:MM:SS.mmm` form ffmpeg is happiest with. */
 export function timecode(seconds) {
   const s = Math.max(0, Number(seconds) || 0);
@@ -281,6 +299,48 @@ export function targetSize(o) {
 }
 
 /**
+ * Work out the geometry of a framing operation once, so the WebAssembly path
+ * and the hardware path cannot disagree about where the crop is or how big the
+ * output should be.
+ *
+ * @param {{rotate?:number, flipH?:boolean, crop?:{x,y,w,h}|null, fill?:string,
+ *          aspect?:string, shortEdge?:number, sourceWidth:number, sourceHeight:number}} o
+ */
+export function frameGeometry(o) {
+  const rotate = (((o.rotate || 0) % 360) + 360) % 360;
+  const swap = rotate === 90 || rotate === 270;
+  const rotW = swap ? o.sourceHeight : o.sourceWidth;
+  const rotH = swap ? o.sourceWidth : o.sourceHeight;
+
+  // Blur fill only means anything when there is empty space to fill.
+  const fill = o.fill === 'blur' && ASPECTS[o.aspect || 'source']?.ratio ? 'blur' : 'trim';
+
+  let crop = null;
+  let cropW = rotW;
+  let cropH = rotH;
+  if (o.crop) {
+    cropW = even(clamp(Math.round(o.crop.w), 2, rotW));
+    cropH = even(clamp(Math.round(o.crop.h), 2, rotH));
+    crop = {
+      x: clamp(Math.round(o.crop.x), 0, rotW - cropW),
+      y: clamp(Math.round(o.crop.y), 0, rotH - cropH),
+      w: cropW,
+      h: cropH,
+    };
+  }
+
+  const { width, height } = targetSize({
+    cropW,
+    cropH,
+    aspect: o.aspect || 'source',
+    fill,
+    shortEdge: o.shortEdge || 0,
+  });
+
+  return { rotate, flipH: !!o.flipH, rotW, rotH, crop, cropW, cropH, fill, width, height };
+}
+
+/**
  * @param {{input:string, base:string, rotate?:0|90|180|270, flipH?:boolean,
  *          crop?:{x:number,y:number,w:number,h:number}|null,
  *          fill?:'trim'|'blur', aspect?:string, shortEdge?:number,
@@ -292,38 +352,18 @@ export function targetSize(o) {
 export function buildFrame(o) {
   const caps = o.caps || DEFAULT_CAPS;
   const container = 'mp4';
-  // Blur fill only means anything when there is empty space to fill.
-  const fill = o.fill === 'blur' && ASPECTS[o.aspect || 'source']?.ratio ? 'blur' : 'trim';
-  const output = `${o.base}-${fill === 'blur' ? 'framed' : 'cropped'}.${container}`;
-  const rotate = ((o.rotate || 0) % 360 + 360) % 360;
-
-  // Dimensions of the frame *after* rotation — the space the crop box lives in.
-  const rotW = rotate === 90 || rotate === 270 ? o.sourceHeight : o.sourceWidth;
-  const rotH = rotate === 90 || rotate === 270 ? o.sourceWidth : o.sourceHeight;
+  const g = frameGeometry(o);
+  const output = `${o.base}-${g.fill === 'blur' ? 'framed' : 'cropped'}.${container}`;
 
   const pre = [];
-  if (rotate === 90) pre.push('transpose=1');
-  else if (rotate === 270) pre.push('transpose=2');
-  else if (rotate === 180) pre.push('transpose=1', 'transpose=1');
-  if (o.flipH) pre.push('hflip');
+  if (g.rotate === 90) pre.push('transpose=1');
+  else if (g.rotate === 270) pre.push('transpose=2');
+  else if (g.rotate === 180) pre.push('transpose=1', 'transpose=1');
+  if (g.flipH) pre.push('hflip');
+  if (g.crop) pre.push(`crop=${g.crop.w}:${g.crop.h}:${g.crop.x}:${g.crop.y}`);
 
-  let cropW = rotW;
-  let cropH = rotH;
-  if (o.crop) {
-    cropW = even(clamp(Math.round(o.crop.w), 2, rotW));
-    cropH = even(clamp(Math.round(o.crop.h), 2, rotH));
-    const x = clamp(Math.round(o.crop.x), 0, rotW - cropW);
-    const y = clamp(Math.round(o.crop.y), 0, rotH - cropH);
-    pre.push(`crop=${cropW}:${cropH}:${x}:${y}`);
-  }
-
-  const { width: W, height: H } = targetSize({
-    cropW,
-    cropH,
-    aspect: o.aspect || 'source',
-    fill,
-    shortEdge: o.shortEdge || 0,
-  });
+  const W = g.width;
+  const H = g.height;
 
   // Re-encoding anyway, so trimming in the same pass is both faster and exact.
   const args = [];
@@ -331,13 +371,17 @@ export function buildFrame(o) {
   args.push('-i', o.input);
   if (o.duration > 0) args.push('-t', timecode(o.duration));
 
-  if (fill === 'blur') {
+  if (g.fill === 'blur') {
     // Blur a cheap downscaled copy, then blow it back up: far faster than
     // blurring at full resolution and the result is smoother.
     const zoom = clamp(o.bgZoom ?? 1.15, 1, 2.5);
-    const bw = even(Math.round((W / 6) * 1));
-    const bh = even(Math.round((H / 6) * 1));
-    const radius = clamp(Math.round((Math.min(bw, bh) * (o.blurAmount ?? 14)) / 100), 1, Math.floor(Math.min(bw, bh) / 2) - 1 || 1);
+    const bw = even(Math.round(W / 6));
+    const bh = even(Math.round(H / 6));
+    const radius = clamp(
+      Math.round((Math.min(bw, bh) * (o.blurAmount ?? 14)) / 100),
+      1,
+      Math.floor(Math.min(bw, bh) / 2) - 1 || 1,
+    );
     const zw = even(Math.round(bw * zoom));
     const zh = even(Math.round(bh * zoom));
 
@@ -365,7 +409,31 @@ export function buildFrame(o) {
   }
 
   args.push(...x264(o.quality), ...faststart(container), output);
-  return { args, output, width: W, height: H, cropW, cropH };
+  return { args, output, width: W, height: H, cropW: g.cropW, cropH: g.cropH };
+}
+
+/**
+ * Put the source's audio onto a video track that was rendered in hardware.
+ *
+ * A pure stream copy of both tracks, so it costs a fraction of a second no
+ * matter how long the clip is.
+ *
+ * @param {{video:string, source:string, base:string, fill:string,
+ *          start?:number, duration?:number, audioCodec?:string, caps?:object}} o
+ */
+export function buildAttachAudio(o) {
+  const caps = o.caps || DEFAULT_CAPS;
+  const output = `${o.base}-${o.fill === 'blur' ? 'framed' : 'cropped'}.mp4`;
+  const args = ['-i', o.video];
+  if (o.start > 0) args.push('-ss', timecode(o.start));
+  args.push('-i', o.source);
+  if (o.duration > 0) args.push('-t', timecode(o.duration));
+  args.push('-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy');
+  // The video is always copied; the audio only if MP4 will accept it as-is.
+  if (canCopyAudio(o.audioCodec, 'mp4')) args.push('-c:a', 'copy');
+  else args.push('-c:a', audioEncoder('mp4', caps), '-b:a', '192k');
+  args.push('-shortest', ...faststart('mp4'), output);
+  return { args, output };
 }
 
 /* ------------------------------------------------------------------ *

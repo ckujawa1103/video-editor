@@ -3,7 +3,7 @@
  * crop box on top, plus a live canvas that shows exactly what the export will
  * look like (including the blurred fill).
  */
-import { ASPECTS, clamp, even } from './ops.js';
+import { ASPECTS, blurPixels, clamp, even } from './ops.js';
 
 const HANDLES = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
 const MIN_PX = 24; // minimum crop size, in on-screen pixels
@@ -244,7 +244,8 @@ export function createFramer({ stage, rotor, video, layer, box, canvas, onChange
       const bw = sw * cover;
       const bh = sh * cover;
       ctx.save();
-      if ('filter' in ctx) ctx.filter = `blur(${Math.max(2, (state.blurAmount / 100) * 40).toFixed(1)}px)`;
+      // Same radius rule the export uses, so what you see is what you get.
+      if ('filter' in ctx) ctx.filter = `blur(${blurPixels(Math.min(canvas.width, canvas.height), state.blurAmount).toFixed(1)}px)`;
       ctx.drawImage(off, sx, sy, sw, sh, (canvas.width - bw) / 2, (canvas.height - bh) / 2, bw, bh);
       ctx.restore();
       if (state.bgDim > 0) {

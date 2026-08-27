@@ -10,7 +10,7 @@ on the device, so it also works with no signal.
 | Tool | What happens |
 | --- | --- |
 | **Clip** | Exports the selected section as its own file. Lossless stream copy by default (instant); an "exact cut" option re-encodes so the cut lands on the precise frame. |
-| **Crop & rotate** | Drag the crop box, rotate in 90° steps, flip, and pick an output shape (9:16, 1:1, 4:5, 16:9, 4:3). |
+| **Crop & rotate** | Drag the crop box, rotate in 90° steps, flip, and pick an output shape (9:16, 1:1, 4:5, 16:9, 4:3). Rendered on the phone's video encoder where possible. |
 | **Trim it away** | The output is exactly the crop — no padding. |
 | **Blurred fill** | The crop sits on a canvas of the chosen shape and a blurred, zoomed copy of the video fills the empty space, the way vertical TikToks do. Blur, background zoom and darkening are adjustable. |
 | **Save the audio** | Exports the sound as MP3 (or M4A / WAV), optionally just the selected section. |
@@ -97,8 +97,30 @@ headers.
 
 ## Speed
 
-Rendering happens in WebAssembly on the device, so the x264 preset decides
-almost everything. Measured on an 8.3s 720x1280 clip:
+### The hardware path
+
+Phones have a dedicated video encoder that sits idle while WebAssembly grinds
+through x264 in software. `src/turbo.js` reaches it through WebCodecs: hardware
+decode, the crop / rotate / blurred-fill transform on a canvas, hardware encode,
+muxed straight to MP4 (via [mediabunny](https://mediabunny.dev)). ffmpeg then
+stream-copies the original audio onto the result, which costs a fraction of a
+second.
+
+It is used automatically when the device can encode H.264 at the output size,
+and the checkbox in the panel turns it off. Anything that fails — no WebCodecs,
+no H.264 encoder, an unreadable track — falls back to the WebAssembly encoder
+with the same settings, so the feature can only ever make a render faster, never
+impossible. `frameGeometry()` is shared by both paths so they cannot disagree
+about where the crop is.
+
+Both branches are covered by the end-to-end test. Desktop Chromium ships without
+H.264, so the suite checks the fallback with H.264 and then drives the full
+decode/transform/encode/mux pipeline with VP9.
+
+### The WebAssembly path
+
+When the hardware path is unavailable, the x264 preset decides almost
+everything. Measured on an 8.3s 720x1280 clip:
 
 | preset | time | vs. clip length |
 | --- | --- | --- |
@@ -155,7 +177,11 @@ any of this.
 
 ```
 index.html            markup for the whole app
-src/ops.js            pure builders: settings -> ffmpeg argument arrays
+src/ops.js            pure builders: settings -> ffmpeg argument arrays, shared geometry
+src/turbo.js          the hardware path: WebCodecs decode -> canvas -> encode -> MP4
+src/keepalive.js      screen wake lock and the unload guard
+src/stash.js          keeps the last export so a discarded tab cannot lose it
+src/download.js       progress-reporting fetch and the resilient file reader
 src/ffmpeg-runner.js  loads the core, probes files, runs jobs, recovers from crashes
 src/framer.js         crop box, rotation, and the live result preview canvas
 src/main.js           wiring: file loading, tabs, jobs, results

@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  ASPECTS, QUALITY, buildAddAudio, buildClip, buildExtractAudio, buildFrame, buildStripAudio,
+  ASPECTS, QUALITY, buildAddAudio, buildAttachAudio, buildClip, buildExtractAudio, buildFrame,
+  buildStripAudio, frameGeometry, videoBitrate, blurPixels,
   canCopyAudio, even, parseCaps, parseProbe, parseTimecode, targetSize, timecode, audioEncoder,
 } from '../src/ops.js';
 
@@ -277,4 +278,72 @@ test('quality presets stay inside the speed budget they were measured against', 
   assert.ok(QUALITY.fast.roughly <= QUALITY.balanced.roughly);
   assert.ok(QUALITY.balanced.roughly <= QUALITY.best.roughly);
   assert.ok(QUALITY.fast.crf > QUALITY.best.crf, 'better quality means a lower crf');
+});
+
+/* ------------------------------------------------------------------ *
+ * the hardware path
+ * ------------------------------------------------------------------ */
+
+test('both render paths compute the same geometry', () => {
+  // The hardware path draws the crop itself, so if its geometry disagreed with
+  // the ffmpeg filter chain the two would silently produce different videos.
+  const settings = {
+    rotate: 90, flipH: true, crop: { x: 11, y: 7, w: 601, h: 801 },
+    fill: 'blur', aspect: '9:16', shortEdge: 1080, sourceWidth: 1920, sourceHeight: 1080,
+  };
+  const g = frameGeometry(settings);
+  const f = buildFrame({ ...settings, input: 'in.mp4', base: 'v' });
+  assert.equal(g.width, f.width);
+  assert.equal(g.height, f.height);
+  assert.equal(g.cropW, f.cropW);
+  assert.equal(g.cropH, f.cropH);
+  assert.match(argOf(f.args, '-filter_complex'), new RegExp(`crop=${g.crop.w}:${g.crop.h}:${g.crop.x}:${g.crop.y}`));
+  assert.equal(g.rotW, 1080);
+  assert.equal(g.rotH, 1920);
+});
+
+test('geometry clamps a crop that runs past the rotated frame', () => {
+  const g = frameGeometry({ rotate: 90, crop: { x: -40, y: -10, w: 9999, h: 9999 }, sourceWidth: 1920, sourceHeight: 1080 });
+  assert.deepEqual(g.crop, { x: 0, y: 0, w: 1080, h: 1920 });
+});
+
+test('attaching audio copies the video and only copies audio MP4 accepts', () => {
+  const aac = buildAttachAudio({ video: 'turbo.mp4', source: 'source.mp4', base: 'v', fill: 'blur', audioCodec: 'aac' });
+  assert.equal(argOf(aac.args, '-c:v'), 'copy');
+  assert.equal(argOf(aac.args, '-c:a'), 'copy', 'aac needs no re-encode');
+  assert.equal(aac.output, 'v-framed.mp4');
+
+  const opus = buildAttachAudio({ video: 'turbo.mp4', source: 'source.webm', base: 'v', fill: 'trim', audioCodec: 'opus' });
+  assert.equal(argOf(opus.args, '-c:a'), 'aac', 'opus cannot be copied into mp4');
+  assert.equal(opus.output, 'v-cropped.mp4');
+});
+
+test('attaching audio trims the source to the same range as the render', () => {
+  const { args } = buildAttachAudio({
+    video: 'turbo.mp4', source: 'source.mp4', base: 'v', fill: 'trim',
+    start: 1.5, duration: 2, audioCodec: 'aac',
+  });
+  assert.ok(args.indexOf('-ss') > args.indexOf('turbo.mp4'), 'the trim applies to the source, not the render');
+  assert.equal(argOf(args, '-ss'), timecode(1.5));
+  assert.equal(argOf(args, '-t'), timecode(2));
+  assert.ok(args.includes('-shortest'));
+});
+
+test('bitrate scales with pixels and quality, within sane bounds', () => {
+  const sd = videoBitrate(480, 854, 30, 'balanced');
+  const hd = videoBitrate(1080, 1920, 30, 'balanced');
+  assert.ok(hd > sd, 'more pixels, more bits');
+  assert.ok(videoBitrate(1080, 1920, 30, 'best') > hd);
+  assert.ok(videoBitrate(1080, 1920, 30, 'fast') < hd);
+  for (const [w, h, fps, q] of [[64, 64, 1, 'fast'], [7680, 4320, 60, 'best']]) {
+    const b = videoBitrate(w, h, fps, q);
+    assert.ok(b >= 800_000 && b <= 24_000_000, `${b} out of bounds`);
+  }
+});
+
+test('blur radius scales with the canvas so preview and export match', () => {
+  assert.ok(blurPixels(1080, 14) > blurPixels(300, 14), 'a bigger canvas needs a bigger radius');
+  // Same proportion of the canvas at both sizes.
+  assert.ok(Math.abs(blurPixels(1080, 14) / 1080 - blurPixels(300, 14) / 300) < 1e-9);
+  assert.ok(blurPixels(300, 0) >= 2, 'never zero');
 });

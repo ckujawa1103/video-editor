@@ -83,6 +83,22 @@ try {
   });
   check('generated a 640x360 / 4s test clip', fixture.length > 1000, `${(fixture.length / 1024).toFixed(0)} KB`);
 
+  // Built now, while the engine is fresh: ffmpeg.wasm can give out after a long
+  // run of jobs, and the app restarts it, but a test helper should not depend
+  // on that. Used much later for the WebCodecs path.
+  const hwFixture = await page.evaluate(async () => {
+    const r = window.__pocketcut.runner;
+    await r.exec([
+      '-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=25',
+      '-f', 'lavfi', '-i', 'anullsrc=r=48000:cl=stereo',
+      '-t', '3', '-c:v', 'libvpx', '-b:v', '800k', '-cpu-used', '8', '-deadline', 'realtime',
+      '-pix_fmt', 'yuv420p', '-c:a', 'libopus', '-shortest', '-y', 'hw.webm',
+    ]);
+    const d = await r.readFile('hw.webm');
+    await r.remove('hw.webm');
+    return Array.from(d);
+  });
+
   await page.setInputFiles('#fileInput', {
     name: 'holiday clip.mp4',
     mimeType: 'video/mp4',
@@ -232,6 +248,52 @@ try {
     });
     writeFileSync(`${ARTIFACTS}/blur-fill-frame.png`, Buffer.from(png));
     check('frame: wrote test-results/blur-fill-frame.png', png.length > 1000, `${(png.length / 1024).toFixed(0)} KB`);
+  }
+
+  /* ---- the hardware path ---- */
+  console.log('\n· hardware encoding: falls back cleanly when the codec is unavailable');
+  await page.click('.tab[data-tab="frame"]');
+  await page.selectOption('#aspect', '9:16');
+  await page.check('input[name="fill"][value="blur"]');
+  await page.selectOption('#frameSize', '480');
+  await page.uncheck('#frameUseSelection');
+  await page.setChecked('#useTurbo', true);
+  // This Chromium is built without H.264, so asking for it exercises the
+  // fallback exactly as a phone that cannot encode would.
+  await page.evaluate(() => { window.__pocketcut.app.turboCodec = 'avc'; });
+  r = await runTool('frame', 'runFrame', 'hardware path: falls back to the built-in encoder');
+  if (r) {
+    const usedTurbo = await page.evaluate(() => window.__pocketcut.app.turboUsed);
+    check('hardware path: reported as not used when unavailable', usedTurbo === false);
+    check('hardware path: fallback still produced a correct file', r.width === 480 && r.hasVideo, `${r.width}x${r.height}`);
+  }
+
+  console.log('\n· hardware encoding: renders through WebCodecs when the codec is available');
+  const canVp9 = await page.evaluate(async () => {
+    const m = await window.__pocketcut.loadTurbo();
+    return m.turboSupported(480, 852, 'vp9');
+  });
+  if (!canVp9) {
+    console.log('   (this browser cannot encode VP9 either — skipping)');
+  } else {
+    // Drive the same pipeline with a codec this browser does have, so the
+    // decode -> transform -> encode -> mux path is exercised for real.
+    await page.setInputFiles('#fileInput', { name: 'hardware.webm', mimeType: 'video/webm', buffer: Buffer.from(hwFixture) });
+    await page.waitForFunction(() => window.__pocketcut.app.info?.probed === true, { timeout: 120000 });
+    await page.evaluate(() => { window.__pocketcut.app.turboCodec = 'vp9'; });
+    await page.click('.tab[data-tab="frame"]');
+    await page.selectOption('#aspect', '9:16');
+    await page.check('input[name="fill"][value="blur"]');
+    await page.selectOption('#frameSize', '480');
+    await page.click('#rotRight');
+    r = await runTool('frame', 'runFrame', 'hardware path: renders through WebCodecs');
+    if (r) {
+      const usedTurbo = await page.evaluate(() => window.__pocketcut.app.turboUsed);
+      check('hardware path: actually used the encoder', usedTurbo === true);
+      check('hardware path: output has the right shape', r.width === 480 && r.height >= 848 && r.height <= 856, `${r.width}x${r.height}`);
+      check('hardware path: audio survived, re-encoded for MP4', r.hasAudio && r.audioCodec === 'aac', r.audioCodec);
+      check('hardware path: full duration kept', Math.abs(r.duration - 3) < 0.4, `${r.duration.toFixed(2)}s`);
+    }
   }
 
   /* ---- the safety net for a discarded tab ---- */
