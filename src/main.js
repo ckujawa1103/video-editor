@@ -186,10 +186,23 @@ async function probeInBackground() {
   const file = app.file;
   try {
     setSourceStatus('Starting the video engine…');
-    await ensureEngine();
+    try {
+      await ensureEngine();
+    } catch (err) {
+      throw new StageError(`Could not start the video engine: ${err?.message || err}`, err);
+    }
     if (app.file !== file) return;
+
+    let name;
+    try {
+      name = await stageSource();
+    } catch (err) {
+      // Reading the picked file is a completely different failure from the
+      // engine not loading, and saying so is the difference between a user
+      // knowing what to do next and being stuck.
+      throw new StageError(err?.message || 'The video file could not be read.', err);
+    }
     setSourceStatus('Reading the video details…');
-    const name = await stageSource();
     if (app.file !== file) return;
     const p = await runner.probe(name);
     if (app.file !== file) return;
@@ -233,10 +246,20 @@ async function probeInBackground() {
     setToolsReady(true);
     reflectAudioAvailability();
   } catch (err) {
-    console.warn('probe failed', err);
+    console.warn('could not prepare the video', err, err?.attempts);
     if (app.file !== file) return;
-    setSourceStatus(`Could not start the video engine: ${err?.message || err}`, { problem: true, retry: true });
+    const message = err instanceof StageError ? err.message : `Could not prepare the video: ${err?.message || err}`;
+    setSourceStatus(message, { problem: true, retry: true });
     setToolsReady(false);
+  }
+}
+
+/** Carries a message already written for the person reading it. */
+class StageError extends Error {
+  constructor(message, cause) {
+    super(message);
+    this.name = 'StageError';
+    this.cause = cause;
   }
 }
 
@@ -246,7 +269,12 @@ async function stageSource() {
   const ext = extOf(app.file.name) || 'mp4';
   const name = `source.${ext}`;
   setStatus('Reading the video…');
-  await runner.writeFile(name, app.file);
+  await runner.writeFile(name, app.file, (received, total) => {
+    setSourceStatus(
+      `Reading the video — ${(received / 1e6).toFixed(1)} of ${(total / 1e6).toFixed(1)} MB…`,
+      { progress: total ? received / total : null },
+    );
+  });
   app.fsName = name;
   app.fsGeneration = runner.generation;
   return name;
@@ -564,6 +592,7 @@ async function runJob(title, build, kind = 'video') {
   try {
     await ensureEngine();
     const input = await stageSource();
+    setSourceStatus('');
     const plan = await build(input);
     setStatus('Processing…');
     await runner.exec(plan.args);

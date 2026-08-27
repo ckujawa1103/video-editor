@@ -9,7 +9,7 @@
  */
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
-import { downloadWithProgress, bytesToBlobUrl } from './download.js';
+import { downloadWithProgress, bytesToBlobUrl, readFileBytes } from './download.js';
 import { parseProbe, parseCaps, DEFAULT_CAPS } from './ops.js';
 
 const CORE = 'ffmpeg/core';
@@ -110,8 +110,11 @@ export class Runner {
     return buf.join('\n');
   }
 
-  async writeFile(name, source) {
-    const data = source instanceof Uint8Array ? source : await fetchFile(source);
+  async writeFile(name, source, onProgress) {
+    let data;
+    if (source instanceof Uint8Array) data = source;
+    else if (typeof Blob !== 'undefined' && source instanceof Blob) data = await readFileBytes(source, { onProgress });
+    else data = await fetchFile(source);
     await this.ff.writeFile(name, data);
     return name;
   }
