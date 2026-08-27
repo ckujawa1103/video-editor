@@ -70,6 +70,13 @@ reading the actual stream info — dimensions, duration and which streams
 survived. It also writes `test-results/blur-fill-frame.png` so the blurred fill
 can be eyeballed.
 
+It serves the build over a **gzipping** static server (`tests/static-server.mjs`)
+rather than `vite preview`, because GitHub Pages compresses responses and that
+changes real behaviour: `Content-Length` then describes the compressed size
+while the browser decodes far more bytes. An earlier version of the engine
+loader treated the header as the true length and failed on the deployed site
+only. Testing against a compressing server keeps that class of bug visible.
+
 ## Deploying
 
 `.github/workflows/deploy.yml` builds and publishes to GitHub Pages on every

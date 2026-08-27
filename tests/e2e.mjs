@@ -5,8 +5,8 @@
  *   npm run build && npm run test:e2e
  */
 import { chromium } from 'playwright';
-import { spawn } from 'node:child_process';
-import { setTimeout as sleep } from 'node:timers/promises';
+
+import { startStaticServer } from './static-server.mjs';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 
 /**
@@ -33,26 +33,13 @@ function check(name, ok, detail = '') {
 const ARTIFACTS = 'test-results';
 mkdirSync(ARTIFACTS, { recursive: true });
 
-const server = spawn('npx', ['vite', 'preview', '--port', String(PORT), '--strictPort'], {
-  stdio: ['ignore', 'pipe', 'pipe'],
-});
-server.stdout.on('data', () => {});
-server.stderr.on('data', (d) => process.env.DEBUG && process.stderr.write(d));
-
-async function waitForServer() {
-  for (let i = 0; i < 60; i++) {
-    try {
-      const r = await fetch(URL_BASE);
-      if (r.ok) return;
-    } catch {}
-    await sleep(500);
-  }
-  throw new Error('preview server never came up');
-}
+// Served gzipped, the way GitHub Pages serves it, so production-only
+// compression bugs surface here rather than on a phone.
+const server = await startStaticServer({ root: 'dist', port: PORT });
 
 let browser;
+
 try {
-  await waitForServer();
   browser = await chromium.launch({
     headless: !HEADFUL,
     ...browserPath(),
@@ -260,7 +247,7 @@ try {
   console.error(err);
 } finally {
   await browser?.close();
-  server.kill('SIGTERM');
+  server.close();
 }
 
 const failed = results.filter((r) => !r.ok);

@@ -4,7 +4,7 @@
  *
  * Nothing here talks to a server beyond re-fetching this app's own files.
  */
-const VERSION = 'pocket-cut-v1';
+const VERSION = 'pocket-cut-v2';
 const ENGINE_CACHE = `${VERSION}-engine`;
 const APP_CACHE = `${VERSION}-app`;
 
@@ -34,31 +34,38 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
 
+  // Immutable by construction: the engine is pinned per build, and Vite puts a
+  // content hash in every asset filename. These are safe to serve from cache.
+  const immutable = url.pathname.includes('/ffmpeg/') || url.pathname.includes('/assets/');
   const isEngine = url.pathname.includes('/ffmpeg/');
 
   event.respondWith(
     (async () => {
       const cache = await caches.open(isEngine ? ENGINE_CACHE : APP_CACHE);
-      const hit = await cache.match(req);
 
-      // The engine never changes for a given build: serve it straight from cache.
-      if (hit && isEngine) return hit;
+      const fromNetwork = () =>
+        fetch(req)
+          .then((res) => {
+            if (res && res.ok && res.type === 'basic') cache.put(req, res.clone()).catch(() => {});
+            return res;
+          })
+          .catch(() => null);
 
-      const network = fetch(req)
-        .then((res) => {
-          if (res && res.ok && res.type === 'basic') cache.put(req, res.clone()).catch(() => {});
-          return res;
-        })
-        .catch(() => null);
-
-      // App shell: instant from cache, refreshed in the background.
-      if (hit) {
-        network.catch(() => {});
-        return hit;
+      if (immutable) {
+        const hit = await cache.match(req);
+        if (hit) return hit;
+        const res = await fromNetwork();
+        return res || new Response('Offline, and this file has not been cached yet.', { status: 504 });
       }
 
-      const res = await network;
+      // Everything else — the HTML above all — comes from the network first, so
+      // a deployed fix reaches the page on the very next load rather than the
+      // one after it. The cache is the offline fallback, not the default.
+      const res = await fromNetwork();
       if (res) return res;
+
+      const hit = await cache.match(req);
+      if (hit) return hit;
       if (req.mode === 'navigate') {
         const shell = await caches.match(new URL('index.html', self.registration.scope).href);
         if (shell) return shell;

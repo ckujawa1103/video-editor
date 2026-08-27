@@ -9,9 +9,14 @@
  */
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
+import { downloadWithProgress, bytesToBlobUrl } from './download.js';
 import { parseProbe, parseCaps, DEFAULT_CAPS } from './ops.js';
 
 const CORE = 'ffmpeg/core';
+
+// Baked in at build time from the vendored file, so the progress bar stays
+// accurate even when the server gzips the response.
+const EXPECTED_WASM_BYTES = typeof __FFMPEG_WASM_BYTES__ === 'number' ? __FFMPEG_WASM_BYTES__ : 0;
 
 function coreUrl(dir, file) {
   // import.meta.env.BASE_URL keeps this working when hosted in a subdirectory.
@@ -56,12 +61,11 @@ export class Runner {
       // the 32 MB download can report progress instead of looking frozen.
       onStatus('Loading the video engine…');
       const coreURL = await toBlobURL(coreUrl(CORE, 'ffmpeg-core.js'), 'text/javascript');
-      const wasmURL = await toBlobURL(
-        coreUrl(CORE, 'ffmpeg-core.wasm'),
-        'application/wasm',
-        true,
-        ({ received, total }) => this.onDownload(received, total),
-      );
+      const wasmBytes = await downloadWithProgress(coreUrl(CORE, 'ffmpeg-core.wasm'), {
+        expectedBytes: EXPECTED_WASM_BYTES,
+        onProgress: (received, total) => this.onDownload(received, total),
+      });
+      const wasmURL = bytesToBlobUrl(wasmBytes, 'application/wasm');
       onStatus('Starting the video engine…');
       await ff.load({ coreURL, wasmURL });
 
