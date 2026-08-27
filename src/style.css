@@ -200,6 +200,21 @@ summary { cursor: pointer; padding: 0.5rem 0; font-weight: 600; }
 
 .meta { margin: 0.5rem 0 0.35rem; color: var(--muted); }
 
+.loading { margin: 0.4rem 0 0.6rem; }
+.loading p { margin: 0 0 0.35rem; color: var(--muted); }
+.loading.problem p { color: var(--danger); }
+.loading.problem .bar { display: none; }
+
+/* Keeps the preview area from collapsing before we know the video's size. */
+.stage.pending::after {
+  content: "";
+  grid-area: 1 / 1;
+  width: min(100%, 320px);
+  aspect-ratio: 16 / 9;
+  border-radius: 8px;
+  background: repeating-linear-gradient(45deg, #14171d, #14171d 12px, #171b22 12px, #171b22 24px);
+}
+
 /* ---------- tabs ---------- */
 
 .tabs { display: flex; gap: 0.4rem; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 0.3rem; }

@@ -81,6 +81,42 @@ function setStatus(text) {
   $('jobStatus').textContent = text;
 }
 
+/**
+ * Status for the source card: engine download, probing, and anything that goes
+ * wrong on the way. Without this the app looks frozen while 32 MB downloads.
+ */
+function setSourceStatus(text, { progress = null, problem = false, retry = false } = {}) {
+  const box = $('sourceStatus');
+  box.hidden = !text;
+  box.classList.toggle('problem', problem);
+  $('sourceStatusText').textContent = text || '';
+  $('retryProbe').hidden = !retry;
+  const bar = $('sourceStatusBar');
+  if (progress == null) {
+    bar.classList.add('indeterminate');
+    bar.style.width = '';
+  } else {
+    bar.classList.remove('indeterminate');
+    bar.style.width = `${clamp(progress * 100, 0, 100).toFixed(0)}%`;
+  }
+}
+
+/** Nothing can be exported until we know how long the video is. */
+function setToolsReady(ready) {
+  for (const b of document.querySelectorAll('.panel .primary')) b.disabled = !ready;
+  if (ready) reflectAudioAvailability();
+}
+
+runner.onDownload = (received, total) => {
+  const mb = (n) => (n / 1e6).toFixed(0);
+  setSourceStatus(
+    total
+      ? `Downloading the video engine — ${mb(received)} of ${mb(total)} MB. This happens once, then it is cached.`
+      : `Downloading the video engine — ${mb(received)} MB…`,
+    { progress: total ? received / total : null },
+  );
+};
+
 /* ------------------------------------------------------------------ *
  * source loading
  * ------------------------------------------------------------------ */
@@ -105,6 +141,9 @@ async function loadSource(file) {
   $('sourceBody').hidden = false;
   $('dropzone').hidden = true;
   $('tabs').hidden = false;
+  $('stage').classList.add('pending');
+  setToolsReady(false);
+  setSourceStatus('Reading the video…');
   showTab(document.querySelector('.tab.active')?.dataset.tab || 'clip');
 
   if (file.size > 250 * 1024 * 1024) {
@@ -122,14 +161,22 @@ async function loadSource(file) {
       previewFailed = true;
       resolve({ duration: 0, width: 0, height: 0 });
     }, { once: true });
-    setTimeout(done, 6000);
+    // A browser that cannot handle the codec often just stalls rather than
+    // raising an error, so treat "still nothing after 6s" as a failure too.
+    setTimeout(() => {
+      if (previewEl.readyState < 1) previewFailed = true;
+      done();
+    }, 6000);
   });
 
   app.info = { ...dom, hasAudio: true, audioCodec: '', videoCodec: '', fps: 0, probed: false };
   app.sel = { start: 0, end: dom.duration || 0 };
   syncSelectionInputs();
   refreshMeta();
-  if (dom.width) framer.setSource(dom.width, dom.height);
+  if (dom.width) {
+    $('stage').classList.remove('pending');
+    framer.setSource(dom.width, dom.height);
+  }
 
   // The browser only tells us so much; ask ffmpeg for the rest in the background.
   probeInBackground();
@@ -138,7 +185,10 @@ async function loadSource(file) {
 async function probeInBackground() {
   const file = app.file;
   try {
+    setSourceStatus('Starting the video engine…');
     await ensureEngine();
+    if (app.file !== file) return;
+    setSourceStatus('Reading the video details…');
     const name = await stageSource();
     if (app.file !== file) return;
     const p = await runner.probe(name);
@@ -162,12 +212,31 @@ async function probeInBackground() {
       probed: true,
     };
     if (!app.sel.end || app.sel.end > app.info.duration) app.sel.end = app.info.duration;
-    if (!before.width && dispW) framer.setSource(dispW, dispH);
+    if (!before.width && dispW) {
+      $('stage').classList.remove('pending');
+      framer.setSource(dispW, dispH);
+    }
     syncSelectionInputs();
     refreshMeta();
+
+    if (!app.info.width || !app.info.duration) {
+      setSourceStatus(
+        'The engine could not read this file\u2019s video track, so the editing tools are switched off. ' +
+          'Try a different file, or open the engine log after running a job for details.',
+        { problem: true, retry: true },
+      );
+      setToolsReady(false);
+      return;
+    }
+
+    setSourceStatus('');
+    setToolsReady(true);
     reflectAudioAvailability();
   } catch (err) {
     console.warn('probe failed', err);
+    if (app.file !== file) return;
+    setSourceStatus(`Could not start the video engine: ${err?.message || err}`, { problem: true, retry: true });
+    setToolsReady(false);
   }
 }
 
@@ -191,10 +260,11 @@ function refreshMeta() {
   if (i.fps) bits.push(`${i.fps.toFixed(0)} fps`);
   if (app.file) bits.push(fmtBytes(app.file.size));
   if (i.probed) bits.push(i.hasAudio ? `audio: ${i.audioCodec || 'yes'}` : 'no audio');
-  if (previewFailed && i.probed) {
+  if (previewFailed) {
     // Some browsers refuse to play formats ffmpeg is perfectly happy to edit.
-    bits.push('preview unavailable in this browser — editing still works');
+    bits.push('this browser cannot play the file — editing still works');
   }
+  if (!i.probed) bits.push('reading…');
   $('sourceMeta').textContent = bits.join(' · ');
 }
 
@@ -497,8 +567,7 @@ async function runJob(title, build, kind = 'video') {
 }
 
 function setButtonsDisabled(on) {
-  for (const b of document.querySelectorAll('.panel .primary')) b.disabled = on;
-  if (!on) reflectAudioAvailability();
+  setToolsReady(!on && app.info?.probed === true && !!app.info?.duration);
 }
 
 function selectionOrNull(useSelection) {
@@ -654,6 +723,12 @@ $('chainBtn').addEventListener('click', async () => {
  * chrome
  * ------------------------------------------------------------------ */
 
+$('retryProbe').addEventListener('click', () => {
+  runner.terminate();
+  app.fsName = null;
+  probeInBackground();
+});
+
 $('aboutBtn').addEventListener('click', () => $('aboutDlg').showModal());
 
 for (const r of document.querySelectorAll('input[name="amode"]')) {
@@ -669,6 +744,7 @@ $('engineNote').textContent =
 
 updateClipHint();
 updateFillHint();
+setToolsReady(false);
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {

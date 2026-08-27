@@ -8,7 +8,7 @@
  * encodes it again — which covers cropping, rotating and blurred fill.
  */
 import { FFmpeg } from '@ffmpeg/ffmpeg';
-import { fetchFile } from '@ffmpeg/util';
+import { fetchFile, toBlobURL } from '@ffmpeg/util';
 import { parseProbe, parseCaps, DEFAULT_CAPS } from './ops.js';
 
 const CORE = 'ffmpeg/core';
@@ -31,6 +31,7 @@ export class Runner {
     this.log = [];
     this.onLog = () => {};
     this.onProgress = () => {};
+    this.onDownload = () => {};
     this.capturing = null;
     this.running = false;
   }
@@ -51,11 +52,18 @@ export class Runner {
       });
       ff.on('progress', ({ progress, time }) => this.onProgress(progress, time));
 
+      // Fetch the core ourselves rather than handing ff.load() the URLs, so
+      // the 32 MB download can report progress instead of looking frozen.
       onStatus('Loading the video engine…');
-      await ff.load({
-        coreURL: coreUrl(CORE, 'ffmpeg-core.js'),
-        wasmURL: coreUrl(CORE, 'ffmpeg-core.wasm'),
-      });
+      const coreURL = await toBlobURL(coreUrl(CORE, 'ffmpeg-core.js'), 'text/javascript');
+      const wasmURL = await toBlobURL(
+        coreUrl(CORE, 'ffmpeg-core.wasm'),
+        'application/wasm',
+        true,
+        ({ received, total }) => this.onDownload(received, total),
+      );
+      onStatus('Starting the video engine…');
+      await ff.load({ coreURL, wasmURL });
 
       this.ff = ff;
       this.dead = false;
