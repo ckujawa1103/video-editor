@@ -5,3 +5,10 @@ public/ffmpeg/
 *.local
 test-results/
 .scratch/
+
+# --- horror film pipeline ---
+projects/*/takes/
+projects/*/selects/
+projects/*/out/
+spend.json
+.env

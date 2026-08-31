@@ -1,0 +1,56 @@
+{
+  "project": "the-woman-beyond-the-hill",
+  "series": "The Old Accounts",
+  "model": "veo-3.1-lite-generate-preview",
+  "locked": false,
+  "_comment": "Set locked=true once generation starts. style_positive and style_negative are prepended/appended to EVERY shot prompt byte-identically. That is where consistency comes from. Do not tune them per shot.",
+
+  "style_positive": "Cinematic film still, locked static camera, no camera movement. Bronze Age eastern Mediterranean, arid highland. Single-source practical lighting with hard falloff into deep black. Color palette strictly limited to bone white, dried blood red-brown, deep umber, and cold blue-grey. Desaturated. Heavy 35mm film grain, dust suspended in the air. Coarse undyed wool, worn leather, rough stone, packed earth. Everything weathered and dirty.",
+
+  "style_negative": "No camera movement, no pan, no tilt, no dolly, no zoom, no handheld, no drone. No glass lanterns, no metal hurricane lamps, no candles. No megalithic stone circles, no dolmens, no standing stones. No fur trim, no horned helmets, no Norse or Viking or Celtic elements. No saturated color, no bright textiles, no patterned fabric. No modern objects. No text, no titles, no watermark. No lens flare, no bloom, no anamorphic streaks. No music.",
+
+  "defaults": {
+    "durationSeconds": 8,
+    "aspectRatio": "16:9",
+    "resolution": "720p",
+    "personGeneration": "allow_all",
+    "takes": 4
+  },
+
+  "shots": [
+    {"id": 1, "section": "I", "cut": 9, "prompt": "Wide landscape at dusk. A low unmarked cairn of stacked field stones on a bare hillside. No people. Dry grass moving in wind. Overcast blue-grey sky, last light."},
+    {"id": 2, "section": "I", "cut": 5, "prompt": "Close on a doorway in a mud-brick wall that has been filled in and sealed with rough stones. The mortar is pale and fresh against old brick. No people."},
+    {"id": 3, "section": "I", "cut": 10, "prompt": "Extreme wide. An enormous army encampment on the far side of a dark valley, seen from a great distance at night. Hundreds of small campfires scattered across the valley floor. Deep blue darkness. No people visible at this distance."},
+    {"id": 4, "section": "I", "cut": 9, "prompt": "Wide. A lone man standing on a bare ridge at night, seen from behind, small in the frame, silhouetted against distant campfires far below. Coarse wool robe. He does not move."},
+    {"id": 5, "section": "I", "cut": 7, "prompt": "Extreme close-up. A man's hand gripping the rough edge of a stone wall. Knuckles pale from pressure. Night. Weathered skin, dirt under the nails."},
+    {"id": 6, "section": "I", "cut": 10, "prompt": "Interior of a wool tent at night. A man kneeling on packed earth, seen from directly behind, head bowed, coarse undyed robe. Lit only by a shallow clay oil lamp with a small open flame on the ground beside him. The flame gutters. Deep shadow beyond."},
+    {"id": 7, "section": "II", "cut": 6, "prompt": "Two men standing in a mud-brick doorway, faces entirely in shadow, completely still. Dim light from behind them. Coarse wool. Uncomfortable, static composition."},
+    {"id": 8, "section": "II", "cut": 7, "prompt": "Wide night landscape. Layered dark hills under a moonlit overcast sky. A single small point of warm light very far away in the distance. No people."},
+    {"id": 9, "section": "II", "cut": 6, "prompt": "Close-up. A folded length of fine undyed linen with a simple woven border being set down on the lid of a plain wooden chest. A man's hands only, no face. Dim lamplight."},
+    {"id": 10, "section": "II", "cut": 5, "prompt": "Close-up. Coarse dark wool cloth being pulled over a man's shoulder. Only shoulder and cloth in frame, no face. Low light."},
+    {"id": 11, "section": "II", "cut": 10, "prompt": "Wide. Three men walking away from camera along a rough stone road at night, lit only by moonlight. Seen from behind, getting smaller. Bare hills either side. Long static hold."},
+    {"id": 12, "section": "III", "cut": 9, "prompt": "Interior of a low mud-brick room at night. A woman seated on the floor, her face turned away from the light. A single shallow clay oil lamp. In the doorway behind her, a man's silhouette fills the frame, backlit and completely featureless."},
+    {"id": 13, "section": "III", "cut": 7, "prompt": "Close-up. A woman's weathered hands resting motionless in her lap on coarse wool. Warm oil lamp light from one side. Hands do not move."},
+    {"id": 14, "section": "III", "cut": 4, "prompt": "Close on a doorway in a mud-brick wall filled in and sealed with rough stones, pale fresh mortar. Night, dim. No people."},
+    {"id": 15, "section": "III", "cut": 6, "prompt": "Extreme close-up of a small open flame on a shallow clay oil lamp. Perfectly still, then leaning sharply to one side. Black background."},
+    {"id": 16, "section": "III", "cut": 8, "prompt": "Wide interior of a low dark room. A woman seated on the floor at one side, a man standing at the other. Considerable empty space between them. One clay oil lamp on the floor. Both faces in shadow."},
+    {"id": 17, "section": "IV", "cut": 8, "prompt": "Close on packed earth floor lit by low lamplight. A shadow falls across it at an angle that does not match the light source. Static. No people."},
+    {"id": 18, "section": "IV", "cut": 6, "prompt": "Extreme close-up of a small open flame on a clay oil lamp, bending away to one side as if pushed by something. Black background. No visible cause."},
+    {"id": 19, "section": "IV", "cut": 7, "prompt": "Close-up of a woman's face lit from below by a clay oil lamp. Weathered, middle-aged, no makeup. Her eyes are open far too wide. She is looking past the camera at something. Absolute terror held completely still."},
+    {"id": 20, "section": "IV", "cut": 6, "prompt": "A man's silhouette standing in a mud-brick doorway, backlit, entirely featureless, motionless. Interior night, dim lamplight in foreground."},
+    {"id": 21, "section": "IV", "cut": 9, "prompt": "Wide interior of a low mud-brick room lit by one clay oil lamp, but the room is impossibly deep. The far corners do not resolve into anything and recede into black. Architecturally wrong. No people, nothing supernatural visible."},
+    {"id": 22, "section": "IV", "cut": 8, "prompt": "The hard edge where warm oil lamp light stops and darkness begins. The darkness has visible texture and depth, like dust or fabric. Nothing identifiable in it. Static."},
+    {"id": 23, "section": "IV", "cut": 8, "prompt": "High angle from behind and above. A man lying face down on a packed earth floor, arms at his sides, small in the frame. One clay oil lamp nearby. Coarse wool robe."},
+    {"id": 24, "section": "V", "cut": 10, "prompt": "Static shot holding on deep darkness just past the edge of oil lamp light. Faint texture in the black. Nothing enters frame. Nothing happens."},
+    {"id": 25, "section": "V", "cut": 7, "prompt": "Close-up. A man's hands pressed flat on a packed earth floor, trembling slightly. Warm low lamplight. Dirt, weathered skin."},
+    {"id": 26, "section": "V", "cut": 7, "prompt": "Close-up of a shallow clay oil lamp with the flame guttering low, nearly out. Black background. Light failing."},
+    {"id": 27, "section": "V", "cut": 10, "prompt": "Very slow push toward a dark corner of a mud-brick room. Nothing is in the corner. The push continues. This is the only shot in the film with camera movement, and it is minimal and steady."},
+    {"id": 28, "section": "V", "cut": 3, "prompt": "Pure black frame. No image."},
+    {"id": 29, "section": "VI", "cut": 9, "prompt": "Wide interior. A man lying full length face down on a packed earth floor. A woman standing over him, seen from behind, her face not visible. Neither moves. One clay oil lamp."},
+    {"id": 30, "section": "VI", "cut": 8, "prompt": "Close-up. A woman's hands kneading dough on a flat stone. Flour, coarse texture. Warm low light. Ordinary, unhurried, domestic."},
+    {"id": 31, "section": "VI", "cut": 7, "prompt": "Close-up. A round flatbread on a plain undecorated clay dish. Faint steam rising. Warm lamplight. Simple and human."},
+    {"id": 32, "section": "VI", "cut": 11, "prompt": "Wide, seen through a mud-brick doorway from an adjoining dark room. Three figures seated on the floor at a low table, eating in silence. Distant, small in frame. One oil lamp. No one speaks or looks up."},
+    {"id": 33, "section": "VI", "cut": 9, "prompt": "Wide. A rough stone road at night under moonlight. Three men walk toward the camera from far away, pass close by, and exit frame. The empty road remains. Static camera throughout."},
+    {"id": 34, "section": "VI", "cut": 10, "prompt": "Wide landscape. A bare ridge at first light, cold grey dawn, empty. Dry grass. No people. Completely still."}
+  ]
+}
